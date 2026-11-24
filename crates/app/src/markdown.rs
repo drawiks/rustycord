@@ -237,34 +237,35 @@ fn token(chars: &[char], start: usize, state: &State) -> Option<(String, Option<
     }
     let inner: String = chars[start + 1..end].iter().collect();
 
-    let (display, target) = if let Some(id) = inner.strip_prefix("@&") {
+    if let Some(id) = inner.strip_prefix("@&") {
         let name = state
             .role(id)
             .map(|role| format!("@{}", role.name))
             .unwrap_or_else(|| "@role".to_string());
-        (name, None)
-    } else if let Some(id) = inner.strip_prefix("@!").or_else(|| inner.strip_prefix('@')) {
+        return Some((name, None, end + 1));
+    }
+
+    if let Some(id) = inner.strip_prefix("@!").or_else(|| inner.strip_prefix('@')) {
         let name = state
             .user(id)
             .map(|user| format!("@{}", user.display_name()))
             .unwrap_or_else(|| format!("@{id}"));
-        (name, Some(Target::User(id.to_string())))
-    } else if let Some(id) = inner.strip_prefix('#') {
+        return Some((name, Some(Target::User(id.to_string())), end + 1));
+    }
+
+    if let Some(id) = inner.strip_prefix('#') {
         let name = state
             .channel(id)
             .map(|channel| format!("#{}", state.channel_display_name(channel)))
             .unwrap_or_else(|| format!("#{id}"));
-        (name, Some(Target::Channel(id.to_string())))
-    } else if let Some(rest) = inner.strip_prefix("a:").or_else(|| inner.strip_prefix(':')) {
-        match rest.split(':').next() {
-            Some(name) if !name.is_empty() => (format!(":{name}:"), None),
-            _ => return None,
-        }
-    } else {
-        return None;
-    };
+        return Some((name, Some(Target::Channel(id.to_string())), end + 1));
+    }
 
-    Some((display, target, end + 1))
+    let rest = inner
+        .strip_prefix("a:")
+        .or_else(|| inner.strip_prefix(':'))?;
+    let name = rest.split(':').next().filter(|name| !name.is_empty())?;
+    Some((format!(":{name}:"), None, end + 1))
 }
 
 fn is_url_start(chars: &[char]) -> bool {
