@@ -4,6 +4,16 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 pub enum Command {
     LoadHistory {
         channel_id: String,
+        before: Option<String>,
+    },
+    Edit {
+        channel_id: String,
+        message_id: String,
+        content: String,
+    },
+    Delete {
+        channel_id: String,
+        message_id: String,
     },
     Send {
         channel_id: String,
@@ -103,8 +113,8 @@ async fn handle(
     ui: &UnboundedSender<UiEvent>,
 ) -> rustycord_discord::Result<()> {
     match command {
-        Command::LoadHistory { channel_id } => {
-            let messages = client.history(&channel_id, None, 50).await?;
+        Command::LoadHistory { channel_id, before } => {
+            let messages = client.history(&channel_id, before.as_deref(), 50).await?;
             let _ = ui.send(UiEvent::History {
                 channel_id,
                 messages,
@@ -115,6 +125,19 @@ async fn handle(
             content,
         } => {
             client.send(&channel_id, &content, None).await?;
+        }
+        Command::Edit {
+            channel_id,
+            message_id,
+            content,
+        } => {
+            client.edit(&channel_id, &message_id, &content).await?;
+        }
+        Command::Delete {
+            channel_id,
+            message_id,
+        } => {
+            client.delete(&channel_id, &message_id).await?;
         }
         Command::Ack {
             channel_id,

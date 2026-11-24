@@ -1,0 +1,13 @@
+pub const RAIL: u32 = 0x1e1f22;
+pub const SIDEBAR: u32 = 0x2b2d31;
+pub const CHAT: u32 = 0x313338;
+pub const HOVER: u32 = 0x3f4147;
+pub const ACTIVE: u32 = 0x404249;
+pub const TEXT: u32 = 0xdbdee1;
+pub const MUTED: u32 = 0x949ba4;
+pub const FAINT: u32 = 0x6d6f78;
+pub const ACCENT: u32 = 0x5865f2;
+pub const DANGER: u32 = 0xed4245;
+pub const CODE_TEXT: u32 = 0xdcddde;
+pub const CODE_BG: u32 = 0x2b2d31;
+pub const LINK: u32 = 0x00a8fc;

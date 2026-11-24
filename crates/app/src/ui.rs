@@ -8,18 +8,11 @@ use gpui_kit::{
 use rustycord_discord::{Channel, ConnectionState, Event, Id, Message, State, snowflake};
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 
-use crate::net::{Command, Net, UiEvent};
-
-const RAIL: u32 = 0x1e1f22;
-const SIDEBAR: u32 = 0x2b2d31;
-const CHAT: u32 = 0x313338;
-const HOVER: u32 = 0x3f4147;
-const ACTIVE: u32 = 0x404249;
-const TEXT: u32 = 0xdbdee1;
-const MUTED: u32 = 0x949ba4;
-const FAINT: u32 = 0x6d6f78;
-const ACCENT: u32 = 0x5865f2;
-const DANGER: u32 = 0xed4245;
+use crate::{
+    markdown,
+    net::{Command, Net, UiEvent},
+    theme::*,
+};
 
 const TYPING_COOLDOWN: Duration = Duration::from_secs(8);
 
@@ -42,6 +35,7 @@ pub struct App {
     connection: String,
     scroll: ScrollHandle,
     last_typing: Option<Instant>,
+    editing: Option<(Id, Id)>,
     subscriptions: Vec<Subscription>,
 }
 
@@ -77,6 +71,7 @@ impl App {
             connection: String::new(),
             scroll: ScrollHandle::new(),
             last_typing: None,
+            editing: None,
             subscriptions: Vec::new(),
         };
 
@@ -160,15 +155,21 @@ impl App {
                 }
                 if scroll {
                     self.scroll.scroll_to_bottom();
+                    if let Some(channel_id) = self.selected_channel.clone() {
+                        self.mark_read(&channel_id);
+                    }
                 }
             }
             UiEvent::History {
                 channel_id,
                 messages,
             } => {
+                let first_load = self.state.messages(&channel_id).is_empty();
                 self.state.insert_history(&channel_id, messages);
                 if Some(&channel_id) == self.selected_channel.as_ref() {
-                    self.scroll.scroll_to_bottom();
+                    if first_load {
+                        self.scroll.scroll_to_bottom();
+                    }
                     self.mark_read(&channel_id);
                 }
             }
@@ -216,6 +217,7 @@ impl App {
         if let Some(net) = &self.net {
             net.send(Command::LoadHistory {
                 channel_id: channel_id.clone(),
+                before: None,
             });
         }
         self.mark_read(&channel_id);
@@ -230,6 +232,49 @@ impl App {
         if let Some(net) = &self.net {
             net.send(Command::Ack {
                 channel_id: channel_id.to_string(),
+                message_id: message.id.clone(),
+            });
+        }
+    }
+
+    fn load_older(&self) {
+        let Some(channel_id) = self.selected_channel.clone() else {
+            return;
+        };
+        let before = self
+            .state
+            .messages(&channel_id)
+            .first()
+            .map(|message| message.id.clone());
+        if let (Some(net), Some(before)) = (&self.net, before) {
+            net.send(Command::LoadHistory {
+                channel_id,
+                before: Some(before),
+            });
+        }
+    }
+
+    fn start_edit(&mut self, message: Message, window: &mut Window, cx: &mut Context<Self>) {
+        self.editing = Some((message.channel_id.clone(), message.id.clone()));
+        self.composer.update(cx, |composer, cx| {
+            composer.set_value(message.content.clone(), window, cx);
+        });
+        let handle = self.composer.read(cx).focus_handle(cx);
+        window.focus(&handle, cx);
+        cx.notify();
+    }
+
+    fn cancel_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.editing = None;
+        self.composer
+            .update(cx, |composer, cx| composer.set_value("", window, cx));
+        cx.notify();
+    }
+
+    fn delete_message(&self, message: &Message) {
+        if let Some(net) = &self.net {
+            net.send(Command::Delete {
+                channel_id: message.channel_id.clone(),
                 message_id: message.id.clone(),
             });
         }
@@ -260,7 +305,15 @@ impl App {
         if content.is_empty() {
             return;
         }
-        if let Some(net) = &self.net {
+        if let Some((edit_channel, edit_message)) = self.editing.take() {
+            if let Some(net) = &self.net {
+                net.send(Command::Edit {
+                    channel_id: edit_channel,
+                    message_id: edit_message,
+                    content,
+                });
+            }
+        } else if let Some(net) = &self.net {
             net.send(Command::Send {
                 channel_id,
                 content,
@@ -598,6 +651,22 @@ impl App {
             .px(px(16.))
             .py(px(16.));
 
+        if self.state.messages(&channel_id).len() >= 50 {
+            list = list.child(
+                div()
+                    .id("load-older")
+                    .flex()
+                    .justify_center()
+                    .text_size(px(12.))
+                    .text_color(rgb(LINK))
+                    .cursor_pointer()
+                    .child("Load older messages")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.load_older();
+                        cx.notify();
+                    })),
+            );
+        }
         if messages.is_empty() {
             list = list.child(
                 div()
@@ -640,10 +709,46 @@ impl App {
             );
         }
 
-        let status = match typing {
-            Some(user_id) => format!("{user_id} is typing..."),
+        let status = match &typing {
+            Some(user_id) => {
+                let name = self
+                    .state
+                    .user(user_id)
+                    .map(|user| user.display_name().to_string())
+                    .unwrap_or_else(|| "Someone".to_string());
+                format!("{name} is typing...")
+            }
             None => String::new(),
         };
+
+        let mut composer_block = div().px(px(16.)).pb(px(14.)).flex().flex_col().gap(px(6.));
+        if let Some(message_id) = self.editing.as_ref().map(|(_, id)| id.clone()) {
+            composer_block = composer_block.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(rgb(MUTED))
+                            .child(format!("Editing message {message_id}")),
+                    )
+                    .child(
+                        div()
+                            .id("cancel-edit")
+                            .text_size(px(12.))
+                            .text_color(rgb(LINK))
+                            .cursor_pointer()
+                            .child("Cancel")
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.cancel_edit(window, cx)),
+                            ),
+                    ),
+            );
+        }
+        composer_block =
+            composer_block.child(Textarea::new(&self.composer).appearance(true).h(px(72.)));
 
         div()
             .flex_1()
@@ -661,12 +766,7 @@ impl App {
                     .text_color(rgb(MUTED))
                     .child(status),
             )
-            .child(
-                div()
-                    .px(px(16.))
-                    .pb(px(14.))
-                    .child(Textarea::new(&self.composer).appearance(true).h(px(72.))),
-            )
+            .child(composer_block)
             .into_any_element()
     }
 
@@ -680,15 +780,22 @@ impl App {
         let time = format_time(&message.timestamp);
         let edited = message.edited_timestamp.is_some();
 
+        let is_mine = self
+            .state
+            .me
+            .as_ref()
+            .is_some_and(|me| me.id == message.author.id);
+        let content = if message.content.is_empty() {
+            "(no content)".to_string()
+        } else {
+            message.content.clone()
+        };
+
         let mut body = div()
             .text_size(px(14.))
             .line_height(px(20.))
             .text_color(rgb(TEXT))
-            .child(if message.content.is_empty() {
-                "(no content)".to_string()
-            } else {
-                message.content.clone()
-            });
+            .child(markdown::build(&content, &self.state));
 
         for attachment in &message.attachments {
             body = body.child(
@@ -716,6 +823,45 @@ impl App {
                         .child(description.clone()),
                 );
             }
+        }
+
+        if is_mine {
+            let edit_message = message.clone();
+            let delete_message = message.clone();
+            body = body.child(
+                div()
+                    .flex()
+                    .gap(px(10.))
+                    .mt(px(2.))
+                    .child(
+                        div()
+                            .id(gpui_kit::SharedString::from(format!("edit-{}", message.id)))
+                            .text_size(px(11.))
+                            .text_color(rgb(FAINT))
+                            .cursor_pointer()
+                            .hover(|style| style.text_color(rgb(TEXT)))
+                            .child("edit")
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.start_edit(edit_message.clone(), window, cx)
+                            })),
+                    )
+                    .child(
+                        div()
+                            .id(gpui_kit::SharedString::from(format!(
+                                "delete-{}",
+                                message.id
+                            )))
+                            .text_size(px(11.))
+                            .text_color(rgb(FAINT))
+                            .cursor_pointer()
+                            .hover(|style| style.text_color(rgb(DANGER)))
+                            .child("delete")
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.delete_message(&delete_message);
+                                cx.notify();
+                            })),
+                    ),
+            );
         }
 
         if !reactions.is_empty() {

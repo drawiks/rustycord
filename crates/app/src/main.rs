@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod markdown;
 mod net;
+mod theme;
 mod ui;
 
 use gpui_kit::{WindowOptions, prelude::*};
