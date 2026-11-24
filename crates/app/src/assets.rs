@@ -22,15 +22,17 @@ pub struct AppAssets;
 
 impl AssetSource for AppAssets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
-        match ExtraIcons.load(path)? {
-            Some(bytes) => Ok(Some(bytes)),
-            None => Assets.load(path),
+        if let Some(bytes) = ExtraIcons.load(path)? {
+            return Ok(Some(bytes));
         }
+        Ok(Assets.load(path).ok().flatten())
     }
 
     fn list(&self, path: &str) -> Result<Vec<SharedString>> {
         let mut paths = ExtraIcons.list(path)?;
         paths.extend(Assets.list(path)?);
+        paths.sort();
+        paths.dedup();
         Ok(paths)
     }
 }
