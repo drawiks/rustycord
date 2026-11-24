@@ -1,22 +1,16 @@
-use gpui_kit::{div, prelude::*, WindowOptions};
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-struct Root;
+mod net;
+mod ui;
 
-impl Render for Root {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .size_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .child("rustycord")
-    }
-}
+use gpui_kit::{WindowOptions, prelude::*};
 
 fn main() {
     gpui_kit::application().run(|cx| {
         gpui_kit::init(cx);
-        gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| cx.new(|_| Root))
-            .expect("failed to open window");
+        gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+            cx.new(|cx| ui::App::new(window, cx))
+        })
+        .expect("failed to open window");
     });
 }

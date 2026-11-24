@@ -1,6 +1,5 @@
 [workspace]
 members = ["crates/app", "crates/discord"]
-default-members = ["crates/discord"]
 resolver = "3"
 
 [workspace.package]
