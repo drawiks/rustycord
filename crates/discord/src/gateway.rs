@@ -21,8 +21,8 @@ use crate::{
     events::{ConnectionState, Event},
     fingerprint::Fingerprint,
     models::{
-        Channel, Emoji, Guild, Message as DiscordMessage, Ready, ReadySupplemental, Relationship,
-        User,
+        Channel, Emoji, Guild, Message as DiscordMessage, Presence, Ready, ReadySupplemental,
+        Relationship, User,
     },
 };
 
@@ -398,6 +398,9 @@ async fn dispatch(name: &str, data: &Value, tx: &mpsc::Sender<Event>) {
             .as_str()
             .map(|id| Event::RelationshipRemove { id: id.to_string() }),
         "USER_UPDATE" => parse::<User>(name, data).map(|u| Event::UserUpdate(Box::new(u))),
+        "PRESENCE_UPDATE" => {
+            parse::<Presence>(name, data).map(|p| Event::PresenceUpdate(Box::new(p)))
+        }
         _ => None,
     };
 

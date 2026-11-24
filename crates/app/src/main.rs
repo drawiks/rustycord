@@ -11,13 +11,16 @@ use gpui_kit::{Bounds, TitlebarOptions, WindowBounds, WindowOptions, point, prel
 fn main() {
     let _logs = init_logging();
     let client = std::sync::Arc::new(http::WreqHttpClient::new());
-    gpui_kit::application().with_http_client(client).run(|cx| {
-        gpui_kit::init(cx);
-        gpui_kit::open_window(window_options(), cx, |window, cx| {
-            cx.new(|cx| ui::App::new(window, cx))
-        })
-        .expect("failed to open window");
-    });
+    gpui_kit::application()
+        .with_assets(gpui_kit::assets::Assets)
+        .with_http_client(client)
+        .run(|cx| {
+            gpui_kit::init(cx);
+            gpui_kit::open_window(window_options(), cx, |window, cx| {
+                cx.new(|cx| ui::App::new(window, cx))
+            })
+            .expect("failed to open window");
+        });
 }
 
 fn window_options() -> WindowOptions {

@@ -328,6 +328,14 @@ pub struct ReadySupplemental {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
+pub struct Presence {
+    #[serde(default)]
+    pub user: User,
+    #[serde(default)]
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct TypingStart {
     pub channel_id: Id,
     #[serde(default)]

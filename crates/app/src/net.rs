@@ -18,10 +18,12 @@ pub enum Command {
     Send {
         channel_id: String,
         content: String,
+        reply_to: Option<String>,
     },
     Ack {
         channel_id: String,
         message_id: String,
+        token: Option<String>,
     },
     Typing {
         channel_id: String,
@@ -45,6 +47,10 @@ pub enum UiEvent {
     History {
         channel_id: String,
         messages: Vec<Message>,
+    },
+    AckToken {
+        channel_id: String,
+        token: String,
     },
     Error(String),
 }
@@ -141,8 +147,11 @@ async fn handle(
         Command::Send {
             channel_id,
             content,
+            reply_to,
         } => {
-            client.send(&channel_id, &content, None).await?;
+            client
+                .send(&channel_id, &content, reply_to.as_deref())
+                .await?;
         }
         Command::Edit {
             channel_id,
@@ -160,8 +169,17 @@ async fn handle(
         Command::Ack {
             channel_id,
             message_id,
+            token,
         } => {
-            client.ack(&channel_id, &message_id, None).await?;
+            let value = client
+                .ack(&channel_id, &message_id, token.as_deref())
+                .await?;
+            if let Some(token) = value["token"].as_str() {
+                let _ = ui.send(UiEvent::AckToken {
+                    channel_id,
+                    token: token.to_string(),
+                });
+            }
         }
         Command::Typing { channel_id } => {
             client.typing(&channel_id).await?;

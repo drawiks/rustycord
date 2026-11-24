@@ -2,9 +2,7 @@ use std::{collections::HashMap, time::Instant};
 
 use crate::{
     events::Event,
-    models::{
-        Channel, Emoji, Guild, Id, Message, Reaction, ReadState, Relationship, User, snowflake,
-    },
+    models::{Channel, Guild, Id, Message, Reaction, ReadState, Relationship, User, snowflake},
 };
 
 const MAX_MESSAGES_PER_CHANNEL: usize = 200;
@@ -19,6 +17,7 @@ pub struct State {
     pub read_states: HashMap<Id, ReadState>,
     pub messages: HashMap<Id, Vec<Message>>,
     pub typing: HashMap<Id, (Id, Instant)>,
+    pub presences: HashMap<Id, String>,
 }
 
 impl State {
@@ -179,6 +178,15 @@ impl State {
                     self.remember_user(user);
                 }
             }
+            Event::PresenceUpdate(presence) => {
+                if !presence.user.id.is_empty() {
+                    self.remember_user(&presence.user);
+                    if !presence.status.is_empty() {
+                        self.presences
+                            .insert(presence.user.id.clone(), presence.status.clone());
+                    }
+                }
+            }
             Event::UserUpdate(user) => {
                 self.remember_user(user);
                 if self.me.as_ref().is_some_and(|me| me.id == user.id) {
@@ -191,6 +199,13 @@ impl State {
 
     pub fn user(&self, id: &str) -> Option<&User> {
         self.users.get(id)
+    }
+
+    pub fn presence(&self, id: &str) -> &str {
+        self.presences
+            .get(id)
+            .map(String::as_str)
+            .unwrap_or("offline")
     }
 
     fn remember_user(&mut self, user: &User) {
@@ -350,7 +365,7 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::Message;
+    use crate::models::{Emoji, Message};
 
     fn message(id: &str, channel: &str, content: &str) -> Message {
         Message {
@@ -379,6 +394,21 @@ mod tests {
         state.apply(&Event::MessageCreate(Box::new(message("10", "1", "old"))));
         state.apply(&Event::MessageUpdate(Box::new(message("10", "1", "new"))));
         assert_eq!(state.messages("1")[0].content, "new");
+    }
+
+    #[test]
+    fn presence_updates_status() {
+        let mut state = State::default();
+        state.apply(&Event::PresenceUpdate(Box::new(crate::models::Presence {
+            user: User {
+                id: "7".to_string(),
+                username: "a".to_string(),
+                ..Default::default()
+            },
+            status: "idle".to_string(),
+        })));
+        assert_eq!(state.presence("7"), "idle");
+        assert_eq!(state.presence("unknown"), "offline");
     }
 
     #[test]
