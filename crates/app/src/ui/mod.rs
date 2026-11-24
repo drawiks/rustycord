@@ -12,13 +12,14 @@ use std::{
 use chrono::{DateTime, Local, NaiveDate};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
+use gpui_kit::component::message_scroller::MessageScrollerState;
 use gpui_kit::{
-    ClipboardItem, Focusable, FontWeight, ScrollHandle, Subscription, Window, div, prelude::*, px,
-    rgb,
+    ClipboardItem, Focusable, FontWeight, Subscription, Window, div, prelude::*, px, rgb,
 };
 use rustycord_discord::{Channel, ConnectionState, Event, Id, Message, State, User, snowflake};
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 
+use self::widgets::{day_label, parse_timestamp};
 use crate::{
     markdown,
     net::{Command, Net, UiEvent},
@@ -45,7 +46,10 @@ pub struct App {
     selected_channel: Option<Id>,
     error: Option<String>,
     connection: String,
-    scroll: ScrollHandle,
+    transcript: gpui_kit::Entity<MessageScrollerState>,
+    rows: Vec<Row>,
+    rows_channel: Option<Id>,
+    text_cache: HashMap<Id, markdown::Layout>,
     last_typing: Option<Instant>,
     editing: Option<(Id, Id)>,
     replying: Option<Message>,
@@ -55,8 +59,6 @@ pub struct App {
     pending_token: Option<String>,
     ack_tokens: HashMap<Id, String>,
     last_ack: Option<Instant>,
-    loading_older: bool,
-    pending_anchor: Option<Id>,
     subscriptions: Vec<Subscription>,
 }
 
@@ -68,6 +70,7 @@ impl App {
                 .placeholder("Message")
                 .submit_on_enter(true)
         });
+        let transcript = cx.new(|cx| MessageScrollerState::new(0, cx));
         let (ui_tx, mut ui_rx) = unbounded_channel();
 
         cx.spawn(async move |this, cx| {
@@ -90,7 +93,10 @@ impl App {
             selected_channel: None,
             error: None,
             connection: String::new(),
-            scroll: ScrollHandle::new(),
+            transcript,
+            rows: Vec::new(),
+            rows_channel: None,
+            text_cache: HashMap::new(),
             last_typing: None,
             editing: None,
             replying: None,
@@ -100,8 +106,6 @@ impl App {
             pending_token: None,
             ack_tokens: HashMap::new(),
             last_ack: None,
-            loading_older: false,
-            pending_anchor: None,
             subscriptions: Vec::new(),
         };
 
@@ -180,27 +184,40 @@ impl App {
                     };
                 }
                 let ready = matches!(event, Event::Ready(_));
-                let (scroll, mine) = match &event {
-                    Event::MessageCreate(message) => (
-                        Some(&message.channel_id) == self.selected_channel.as_ref(),
-                        self.state
-                            .me
-                            .as_ref()
-                            .is_some_and(|me| me.id == message.author.id),
-                    ),
-                    _ => (false, false),
-                };
+                let mut names_changed = false;
+                match &event {
+                    Event::MessageUpdate(message) => {
+                        self.text_cache.remove(&message.id);
+                    }
+                    Event::MessageDelete { id, .. } => {
+                        self.text_cache.remove(id);
+                    }
+                    Event::Users(_)
+                    | Event::PrivateChannels(_)
+                    | Event::Relationships(_)
+                    | Event::GuildCreate(_)
+                    | Event::GuildUpdate(_)
+                    | Event::ChannelCreate(_)
+                    | Event::ChannelUpdate(_)
+                    | Event::ChannelDelete(_)
+                    | Event::UserUpdate(_) => {
+                        self.text_cache.clear();
+                        names_changed = true;
+                    }
+                    _ => {}
+                }
                 self.state.apply(&event);
                 if ready {
                     self.pick_default_channel(cx);
                 }
-                if scroll {
-                    if mine || self.at_bottom() {
-                        self.scroll.scroll_to_bottom();
-                    }
-                    if let Some(channel_id) = self.selected_channel.clone() {
-                        self.mark_read(&channel_id, false);
-                    }
+                self.sync_transcript(cx);
+                if names_changed {
+                    self.transcript.update(cx, |state, cx| state.remeasure(cx));
+                }
+                if let Event::MessageCreate(message) = &event
+                    && Some(&message.channel_id) == self.selected_channel.as_ref()
+                {
+                    self.mark_read(&message.channel_id, false);
                 }
             }
             UiEvent::History {
@@ -208,15 +225,14 @@ impl App {
                 messages,
             } => {
                 let first_load = self.state.messages(&channel_id).is_empty();
-                let received = messages.len();
                 self.state.insert_history(&channel_id, messages);
-                self.loading_older = false;
-                if received == 0 {
-                    self.pending_anchor = None;
-                }
-                if Some(&channel_id) == self.selected_channel.as_ref() && first_load {
-                    self.scroll.scroll_to_bottom();
-                    self.mark_read(&channel_id, true);
+                if Some(&channel_id) == self.selected_channel.as_ref() {
+                    self.sync_transcript(cx);
+                    if first_load {
+                        self.transcript
+                            .update(cx, |state, cx| state.scroll_to_end(cx));
+                        self.mark_read(&channel_id, true);
+                    }
                 }
             }
         }
@@ -272,7 +288,7 @@ impl App {
             });
         }
         self.mark_read(&channel_id, true);
-        self.scroll.scroll_to_bottom();
+        self.sync_transcript(cx);
         cx.notify();
     }
 
@@ -303,10 +319,6 @@ impl App {
             mentions += channel_mentions;
         }
         (unread, mentions)
-    }
-
-    fn at_bottom(&self) -> bool {
-        (self.scroll.max_offset().y - self.scroll.offset().y) < px(60.)
     }
 
     fn focus_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -358,23 +370,106 @@ impl App {
         }
     }
 
-    fn maybe_load_older(&mut self) {
-        if self.loading_older {
-            return;
-        }
+    fn sync_transcript(&mut self, cx: &mut Context<Self>) {
         let Some(channel_id) = self.selected_channel.clone() else {
+            self.rows.clear();
+            self.rows_channel = None;
+            self.transcript.update(cx, |state, cx| state.reset(0, cx));
             return;
         };
-        if self.state.messages(&channel_id).len() < 50 || self.scroll.offset().y > px(120.) {
-            return;
+
+        let new_rows = self.compute_rows(&channel_id);
+        let same_channel = self.rows_channel.as_deref() == Some(channel_id.as_str());
+
+        if !same_channel {
+            self.rows = new_rows;
+            self.rows_channel = Some(channel_id.clone());
+            let count = self.rows.len();
+            self.transcript.update(cx, |state, cx| {
+                state.reset(count, cx);
+                state.scroll_to_end(cx);
+            });
+        } else if self.rows != new_rows {
+            let old = std::mem::replace(&mut self.rows, new_rows);
+            let (prefix, suffix) = common_affixes(&old, &self.rows);
+            let old_range = prefix..old.len().saturating_sub(suffix);
+            let new_count = self.rows.len().saturating_sub(prefix + suffix);
+            let total = self.rows.len();
+            let spliced = self.transcript.update(cx, |state, cx| {
+                if old_range.is_empty() {
+                    state.splice(prefix..prefix, new_count, cx)
+                } else {
+                    state.splice(old_range, new_count, cx)
+                }
+            });
+            if !spliced {
+                self.transcript
+                    .update(cx, |state, cx| state.reset(total, cx));
+            }
         }
-        self.pending_anchor = self
-            .state
-            .messages(&channel_id)
-            .first()
-            .map(|message| message.id.clone());
-        self.loading_older = true;
-        self.load_older();
+
+        self.ensure_text_cache(&channel_id);
+    }
+
+    fn compute_rows(&self, channel_id: &str) -> Vec<Row> {
+        let messages = self.state.messages(channel_id);
+        let mut rows = Vec::with_capacity(messages.len() + 8);
+        if messages.len() >= 50 {
+            rows.push(Row::LoadOlder);
+        }
+
+        let read_marker = self.unread_marker.clone();
+        let mut previous: Option<(Id, DateTime<Local>)> = None;
+        let mut last_date: Option<NaiveDate> = None;
+        let mut unread_shown = false;
+        let mut first = true;
+
+        for message in messages {
+            let timestamp = parse_timestamp(&message.timestamp);
+            let date = timestamp.map(|time| time.date_naive());
+            if let Some(date) = date
+                && last_date != Some(date)
+            {
+                rows.push(Row::Date(day_label(date)));
+                last_date = Some(date);
+            }
+            if !unread_shown
+                && !first
+                && let Some(marker) = &read_marker
+                && snowflake(&message.id) > snowflake(marker)
+            {
+                rows.push(Row::Unread);
+                unread_shown = true;
+            }
+            let compact = match (&previous, timestamp) {
+                (Some((author, at)), Some(now)) => {
+                    author == &message.author.id
+                        && now.signed_duration_since(*at) < chrono::Duration::minutes(5)
+                }
+                _ => false,
+            };
+            previous = timestamp.map(|time| (message.author.id.clone(), time));
+            first = false;
+            rows.push(Row::Message {
+                id: message.id.clone(),
+                compact,
+            });
+        }
+
+        rows
+    }
+
+    fn ensure_text_cache(&mut self, channel_id: &str) {
+        let mut missing: Vec<(Id, String)> = Vec::new();
+        for message in self.state.messages(channel_id) {
+            if !message.content.is_empty() && !self.text_cache.contains_key(&message.id) {
+                missing.push((message.id.clone(), message.content.clone()));
+            }
+        }
+        for (id, content) in missing {
+            let layout = markdown::layout(&content, &self.state);
+            self.text_cache.insert(id, layout);
+        }
     }
 
     fn load_older(&self) {
@@ -466,13 +561,81 @@ impl App {
         cx.notify();
     }
 
-    fn delete_message(&self, message: &Message) {
+    fn current_message(&self, message_id: &str) -> Option<Message> {
+        let channel = self
+            .rows_channel
+            .clone()
+            .or_else(|| self.selected_channel.clone())?;
+        self.state.message(&channel, message_id).cloned()
+    }
+
+    fn start_reply_by_id(&mut self, message_id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(message) = self.current_message(message_id) {
+            self.start_reply(message, window, cx);
+        }
+    }
+
+    fn start_edit_by_id(&mut self, message_id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(message) = self.current_message(message_id) {
+            self.start_edit(message, window, cx);
+        }
+    }
+
+    fn delete_by_id(&self, message_id: &str, cx: &mut Context<Self>) {
+        let Some(channel) = self.rows_channel.clone() else {
+            return;
+        };
         if let Some(net) = &self.net {
             net.send(Command::Delete {
-                channel_id: message.channel_id.clone(),
-                message_id: message.id.clone(),
+                channel_id: channel,
+                message_id: message_id.to_string(),
             });
+            cx.notify();
         }
+    }
+
+    fn copy_message_text(&self, message_id: &str, cx: &mut Context<Self>) {
+        let Some(channel) = self.rows_channel.as_deref() else {
+            return;
+        };
+        if let Some(message) = self.state.message(channel, message_id) {
+            cx.write_to_clipboard(ClipboardItem::new_string(message.content.clone()));
+        }
+    }
+
+    fn toggle_reaction(
+        &mut self,
+        message_id: &str,
+        emoji: &rustycord_discord::Emoji,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(channel) = self.rows_channel.clone() else {
+            return;
+        };
+        let Some(message) = self.state.message(&channel, message_id) else {
+            return;
+        };
+        let key = emoji.text();
+        let mine = message
+            .reactions
+            .iter()
+            .any(|reaction| reaction.emoji.text() == key && reaction.me);
+        if let Some(net) = &self.net {
+            if mine {
+                net.send(Command::Unreact {
+                    channel_id: channel,
+                    message_id: message_id.to_string(),
+                    emoji: key,
+                });
+            } else {
+                net.send(Command::React {
+                    channel_id: channel,
+                    message_id: message_id.to_string(),
+                    emoji: key,
+                });
+            }
+        }
+        cx.notify();
     }
 
     fn notify_typing(&mut self, cx: &mut Context<Self>) {
@@ -520,35 +683,6 @@ impl App {
             composer.set_value("", window, cx);
         });
         cx.notify();
-    }
-
-    fn react(&self, message: &Message, emoji: &rustycord_discord::Emoji) {
-        let Some(net) = &self.net else {
-            return;
-        };
-        let channel_id = message.channel_id.clone();
-        let message_id = message.id.clone();
-        let emoji = emoji.text();
-        if emoji.is_empty() {
-            return;
-        }
-        if message
-            .reactions
-            .iter()
-            .any(|r| r.me && r.emoji.text() == emoji)
-        {
-            net.send(Command::Unreact {
-                channel_id,
-                message_id,
-                emoji,
-            });
-        } else {
-            net.send(Command::React {
-                channel_id,
-                message_id,
-                emoji,
-            });
-        }
     }
 
     fn render_main(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -617,4 +751,25 @@ fn save_token(token: &str) {
         Ok(()) => tracing::info!("token saved to keyring"),
         Err(error) => tracing::warn!("could not save token: {error}"),
     }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(super) enum Row {
+    LoadOlder,
+    Date(String),
+    Unread,
+    Message { id: Id, compact: bool },
+}
+
+fn common_affixes(old: &[Row], new: &[Row]) -> (usize, usize) {
+    let prefix = old.iter().zip(new).take_while(|(a, b)| a == b).count();
+    let limit = old.len().min(new.len()).saturating_sub(prefix);
+    let suffix = old
+        .iter()
+        .rev()
+        .zip(new.iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count()
+        .min(limit);
+    (prefix, suffix)
 }

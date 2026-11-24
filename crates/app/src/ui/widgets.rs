@@ -258,6 +258,21 @@ pub(super) fn fit_size(
     ((w * scale).max(1.0), (h * scale).max(1.0))
 }
 
+pub(super) fn format_bytes(size: u64) -> String {
+    const UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
+    let mut value = size as f64;
+    let mut unit = 0;
+    while value >= 1024. && unit + 1 < UNITS.len() {
+        value /= 1024.;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{size} {}", UNITS[0])
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

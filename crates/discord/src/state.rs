@@ -301,6 +301,13 @@ impl State {
         channels
     }
 
+    pub fn message(&self, channel_id: &str, message_id: &str) -> Option<&Message> {
+        self.messages
+            .get(channel_id)?
+            .iter()
+            .find(|message| message.id == message_id)
+    }
+
     pub fn messages(&self, channel_id: &str) -> &[Message] {
         self.messages
             .get(channel_id)

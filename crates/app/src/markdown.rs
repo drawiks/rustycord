@@ -1,7 +1,8 @@
 use std::ops::Range;
 
 use gpui_kit::{
-    FontStyle, FontWeight, HighlightStyle, StrikethroughStyle, StyledText, TextStyle, px, rgb,
+    FontStyle, FontWeight, HighlightStyle, SharedString, StrikethroughStyle, StyledText, TextRun,
+    TextStyle, px, rgb,
 };
 use rustycord_discord::{Id, State};
 
@@ -14,9 +15,17 @@ pub enum Target {
     Channel(Id),
 }
 
-pub struct Rendered {
-    pub text: StyledText,
+#[derive(Clone)]
+pub struct Layout {
+    pub text: SharedString,
+    pub runs: Vec<TextRun>,
     pub targets: Vec<(Range<usize>, Target)>,
+}
+
+impl Layout {
+    pub fn styled(&self) -> StyledText {
+        StyledText::new(self.text.clone()).with_runs(self.runs.clone())
+    }
 }
 
 #[derive(Clone, Copy, Default, PartialEq)]
@@ -36,7 +45,7 @@ struct Span {
     target: Option<Target>,
 }
 
-pub fn build(content: &str, state: &State) -> Rendered {
+pub fn layout(content: &str, state: &State) -> Layout {
     let spans = spans(content, state);
     let base = TextStyle {
         color: rgb(TEXT).into(),
@@ -89,8 +98,9 @@ pub fn build(content: &str, state: &State) -> Rendered {
         runs.push(run_style.to_run(span.text.len()));
     }
 
-    Rendered {
-        text: StyledText::new(joined).with_runs(runs),
+    Layout {
+        text: joined.into(),
+        runs,
         targets,
     }
 }
