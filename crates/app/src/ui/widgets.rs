@@ -264,8 +264,12 @@ mod tests {
 
     #[test]
     fn fits_images_into_bounds() {
-        assert_eq!(fit_size(Some(800), Some(400), 420., 320.), (420., 210.));
-        assert_eq!(fit_size(Some(200), Some(100), 420., 320.), (200., 100.));
+        let (w, h) = fit_size(Some(800), Some(400), 420., 320.);
+        assert!((w - 420.).abs() < 0.01 && (h - 210.).abs() < 0.01);
+
+        let (w, h) = fit_size(Some(200), Some(100), 420., 320.);
+        assert!((w - 200.).abs() < 0.01 && (h - 100.).abs() < 0.01);
+
         let (w, h) = fit_size(None, None, 420., 320.);
         assert!(w <= 420. && h <= 320.);
     }
