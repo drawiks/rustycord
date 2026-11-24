@@ -572,7 +572,23 @@ impl App {
             }
         };
 
+        let has_channels = !channels.is_empty();
         let mut list = div().flex().flex_col().gap(px(1.)).p(px(8.));
+        if !has_channels {
+            let label = if self.selected_guild.is_some() {
+                "No channels"
+            } else {
+                "No direct messages"
+            };
+            list = list.child(
+                div()
+                    .px(px(8.))
+                    .py(px(6.))
+                    .text_size(px(12.))
+                    .text_color(rgb(FAINT))
+                    .child(label),
+            );
+        }
         for channel in channels {
             let selected = self.selected_channel.as_ref() == Some(&channel.id);
             let id = channel.id.clone();
@@ -603,7 +619,7 @@ impl App {
                     div()
                         .flex_1()
                         .truncate()
-                        .child(format!("#{}", channel.display_name())),
+                        .child(format!("#{}", self.state.channel_display_name(&channel))),
                 )
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.select_channel(id.clone(), cx);
@@ -643,17 +659,70 @@ impl App {
             )
     }
 
+    fn render_top_bar(&self, title: Option<String>) -> impl IntoElement {
+        let mut bar = div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .px(px(16.))
+            .py(px(12.))
+            .border_b(px(1.))
+            .border_color(rgb(RAIL))
+            .child(
+                div()
+                    .text_size(px(15.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(rgb(0xf2f3f5))
+                    .truncate()
+                    .child(title.unwrap_or_else(|| "rustycord".to_string())),
+            )
+            .child(
+                div()
+                    .text_size(px(12.))
+                    .text_color(rgb(MUTED))
+                    .child(self.connection.clone()),
+            );
+        if let Some(error) = &self.error {
+            bar = bar.child(
+                div()
+                    .text_size(px(12.))
+                    .text_color(rgb(DANGER))
+                    .child(error.clone()),
+            );
+        }
+        bar
+    }
+
     fn render_chat(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(channel_id) = self.selected_channel.clone() else {
             return div()
                 .flex_1()
                 .h_full()
                 .flex()
-                .items_center()
-                .justify_center()
+                .flex_col()
                 .bg(rgb(CHAT))
-                .text_color(rgb(MUTED))
-                .child("Select a channel")
+                .child(self.render_top_bar(None))
+                .child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .justify_center()
+                        .gap(px(6.))
+                        .child(
+                            div()
+                                .text_size(px(14.))
+                                .text_color(rgb(MUTED))
+                                .child("Select a channel"),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(12.))
+                                .text_color(rgb(FAINT))
+                                .child(self.connection.clone()),
+                        ),
+                )
                 .into_any_element();
         };
 
@@ -716,35 +785,7 @@ impl App {
             list = list.child(self.render_message(message, reactions, cx));
         }
 
-        let mut header = div()
-            .flex()
-            .items_center()
-            .justify_between()
-            .px(px(16.))
-            .py(px(12.))
-            .border_b(px(1.))
-            .border_color(rgb(RAIL))
-            .child(
-                div()
-                    .text_size(px(15.))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(rgb(0xf2f3f5))
-                    .child(format!("#{channel_name}")),
-            )
-            .child(
-                div()
-                    .text_size(px(12.))
-                    .text_color(rgb(MUTED))
-                    .child(self.connection.clone()),
-            );
-        if let Some(error) = &self.error {
-            header = header.child(
-                div()
-                    .text_size(px(12.))
-                    .text_color(rgb(DANGER))
-                    .child(error.clone()),
-            );
-        }
+        let header = self.render_top_bar(Some(format!("#{channel_name}")));
 
         let status = match &typing {
             Some(user_id) => {

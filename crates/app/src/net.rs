@@ -1,4 +1,4 @@
-use rustycord_discord::{Discord, Event, Message};
+use rustycord_discord::{Discord, Event, Message, User};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 pub enum Command {
@@ -84,6 +84,24 @@ async fn run(
         }
     };
     let _ = ui.send(UiEvent::LoggedIn);
+
+    {
+        let client = client.clone();
+        let ui = ui.clone();
+        tokio::spawn(async move {
+            if let Ok(channels) = client.private_channels().await {
+                let users: Vec<User> = channels
+                    .iter()
+                    .flat_map(|channel| channel.recipients.iter().cloned())
+                    .collect();
+                let _ = ui.send(UiEvent::Discord(Event::Users(users)));
+                let _ = ui.send(UiEvent::Discord(Event::PrivateChannels(channels)));
+            }
+            if let Ok(relationships) = client.relationships().await {
+                let _ = ui.send(UiEvent::Discord(Event::Relationships(relationships)));
+            }
+        });
+    }
 
     let (gateway_tx, mut gateway_rx) = tokio::sync::mpsc::channel(1024);
     let _gateway = client.spawn_gateway(gateway_tx);
