@@ -6117,10 +6117,16 @@ dependencies = [
 name = "rustycord"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "bytes",
  "chrono",
+ "futures",
  "gpui-kit",
+ "http",
  "rustycord-discord",
  "tokio",
+ "wreq",
+ "wreq-util",
 ]
 
 [[package]]

@@ -5,7 +5,7 @@ use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, Textar
 use gpui_kit::{
     Focusable, FontWeight, ScrollHandle, Subscription, Window, div, prelude::*, px, rgb,
 };
-use rustycord_discord::{Channel, ConnectionState, Event, Id, Message, State, snowflake};
+use rustycord_discord::{Channel, ConnectionState, Event, Id, Message, State, User, snowflake};
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 
 use crate::{
@@ -478,30 +478,39 @@ impl App {
                 .on_click(cx.listener(|this, _, _, cx| this.select_guild(None, cx))),
         );
 
-        let guilds: Vec<(String, String)> = self
+        let guilds: Vec<(String, String, Option<String>)> = self
             .state
             .guilds
             .iter()
-            .map(|g| (g.id.clone(), g.name.clone()))
+            .map(|g| (g.id.clone(), g.name.clone(), g.icon.clone()))
             .collect();
-        for (id, name) in guilds {
+        for (id, name, icon) in guilds {
             let selected = self.selected_guild.as_ref() == Some(&id);
             let element_id = gpui_kit::SharedString::from(format!("rail-{id}"));
             let click_id = id.clone();
+            let visual = match icon {
+                Some(icon) => gpui_kit::img(guild_icon_url(&id, &icon))
+                    .size(px(48.))
+                    .into_any_element(),
+                None => div()
+                    .text_size(px(16.))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(rgb(0xffffff))
+                    .child(initials(&name))
+                    .into_any_element(),
+            };
             rail = rail.child(
                 div()
                     .id(element_id)
                     .size(px(48.))
                     .rounded(px(16.))
+                    .overflow_hidden()
                     .flex()
                     .items_center()
                     .justify_center()
                     .bg(if selected { rgb(ACCENT) } else { rgb(SIDEBAR) })
-                    .text_size(px(16.))
-                    .font_weight(FontWeight::BOLD)
-                    .text_color(rgb(0xffffff))
                     .cursor_pointer()
-                    .child(initials(&name))
+                    .child(visual)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.select_guild(Some(click_id.clone()), cx)
                     })),
@@ -798,12 +807,23 @@ impl App {
             .child(markdown::build(&content, &self.state));
 
         for attachment in &message.attachments {
-            body = body.child(
-                div()
-                    .text_size(px(12.))
-                    .text_color(rgb(ACCENT))
-                    .child(format!("[file] {}", attachment.filename)),
-            );
+            if is_image(&attachment.content_type, &attachment.filename) {
+                body = body.child(
+                    div().mt(px(4.)).child(
+                        gpui_kit::img(attachment.url.clone())
+                            .max_w(px(420.))
+                            .max_h(px(320.))
+                            .rounded(px(4.)),
+                    ),
+                );
+            } else {
+                body = body.child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(rgb(LINK))
+                        .child(format!("[file] {}", attachment.filename)),
+                );
+            }
         }
         for embed in &message.embeds {
             if let Some(title) = &embed.title {
@@ -821,6 +841,26 @@ impl App {
                         .text_size(px(13.))
                         .text_color(rgb(MUTED))
                         .child(description.clone()),
+                );
+            }
+            if let Some(image) = &embed.image {
+                body = body.child(
+                    div().mt(px(4.)).child(
+                        gpui_kit::img(image.url.clone())
+                            .max_w(px(420.))
+                            .max_h(px(320.))
+                            .rounded(px(4.)),
+                    ),
+                );
+            }
+            if let Some(thumbnail) = &embed.thumbnail {
+                body = body.child(
+                    div().mt(px(4.)).child(
+                        gpui_kit::img(thumbnail.url.clone())
+                            .max_w(px(80.))
+                            .max_h(px(80.))
+                            .rounded(px(4.)),
+                    ),
                 );
             }
         }
@@ -900,7 +940,7 @@ impl App {
         div()
             .flex()
             .gap(px(12.))
-            .child(avatar(&author, &message.author.id))
+            .child(avatar(&message.author))
             .child(
                 div()
                     .flex()
@@ -952,25 +992,49 @@ fn initials(name: &str) -> String {
         .collect()
 }
 
-fn avatar_color(id: &str) -> u32 {
-    const COLORS: [u32; 6] = [0x5865f2, 0x57f287, 0xfee75c, 0xeb459e, 0xed4245, 0x00b0f4];
-    let sum: u32 = id.bytes().map(u32::from).sum();
-    COLORS[(sum as usize) % COLORS.len()]
-}
-
-fn avatar(name: &str, id: &str) -> impl IntoElement {
+fn avatar(user: &User) -> impl IntoElement {
     div()
         .size(px(40.))
         .flex_none()
         .rounded(px(20.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .bg(rgb(avatar_color(id)))
-        .text_size(px(15.))
-        .font_weight(FontWeight::BOLD)
-        .text_color(rgb(0xffffff))
-        .child(initials(name))
+        .overflow_hidden()
+        .child(gpui_kit::img(avatar_url(user)).size(px(40.)))
+}
+
+fn avatar_url(user: &User) -> String {
+    match &user.avatar {
+        Some(hash) if hash.starts_with("a_") => format!(
+            "https://cdn.discordapp.com/avatars/{}/{hash}.gif?size=64",
+            user.id
+        ),
+        Some(hash) => format!(
+            "https://cdn.discordapp.com/avatars/{}/{hash}.png?size=64",
+            user.id
+        ),
+        None => {
+            let index = user.discriminator.parse::<u32>().unwrap_or(0) % 5;
+            format!("https://cdn.discordapp.com/embed/avatars/{index}.png")
+        }
+    }
+}
+
+fn guild_icon_url(guild_id: &str, hash: &str) -> String {
+    if hash.starts_with("a_") {
+        format!("https://cdn.discordapp.com/icons/{guild_id}/{hash}.gif?size=96")
+    } else {
+        format!("https://cdn.discordapp.com/icons/{guild_id}/{hash}.png?size=96")
+    }
+}
+
+fn is_image(content_type: &Option<String>, filename: &str) -> bool {
+    if let Some(content_type) = content_type {
+        return content_type.starts_with("image/");
+    }
+    let extension = filename.rsplit('.').next().unwrap_or_default();
+    matches!(
+        extension.to_ascii_lowercase().as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "avif" | "bmp"
+    )
 }
 
 fn format_time(timestamp: &str) -> String {
