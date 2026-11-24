@@ -10,10 +10,15 @@ description = "Native Discord client for Linux"
 anyhow = "1"
 bytes = "1"
 chrono = "0.4"
+dirs = "7"
 futures = "0.3"
 gpui-kit = "=0.11.0"
 http = "1"
+keyring = "4"
 rustycord-discord = { path = "../discord" }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync"] }
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 wreq = "=0.16.3"
 wreq-util = "=0.2.0"

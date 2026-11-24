@@ -36,6 +36,7 @@ pub struct App {
     scroll: ScrollHandle,
     last_typing: Option<Instant>,
     editing: Option<(Id, Id)>,
+    pending_token: Option<String>,
     subscriptions: Vec<Subscription>,
 }
 
@@ -72,6 +73,7 @@ impl App {
             scroll: ScrollHandle::new(),
             last_typing: None,
             editing: None,
+            pending_token: None,
             subscriptions: Vec::new(),
         };
 
@@ -96,7 +98,7 @@ impl App {
         let handle = app.token_input.read(cx).focus_handle(cx);
         window.focus(&handle, cx);
 
-        if let Ok(token) = std::env::var("DISCORD_TOKEN") {
+        if let Some(token) = std::env::var("DISCORD_TOKEN").ok().or_else(load_token) {
             app.token_input
                 .update(cx, |input, cx| input.set_value(token, window, cx));
         }
@@ -114,6 +116,7 @@ impl App {
         self.screen = Screen::Connecting;
         self.error = None;
         self.connection = "connecting".to_string();
+        self.pending_token = Some(token.clone());
         self.net = Some(crate::net::spawn(token, self.ui_tx.clone()));
         cx.notify();
     }
@@ -123,6 +126,9 @@ impl App {
             UiEvent::LoggedIn => {
                 self.screen = Screen::Main;
                 self.connection = "connecting".to_string();
+                if let Some(token) = self.pending_token.take() {
+                    save_token(&token);
+                }
             }
             UiEvent::LoginFailed(error) | UiEvent::Error(error) => {
                 if matches!(self.screen, Screen::Connecting) {
@@ -978,6 +984,20 @@ impl Render for App {
             Screen::Login | Screen::Connecting => self.render_login(cx).into_any_element(),
             Screen::Main => self.render_main(cx).into_any_element(),
         }
+    }
+}
+
+fn load_token() -> Option<String> {
+    keyring::Entry::new("rustycord", "token")
+        .ok()?
+        .get_password()
+        .ok()
+}
+
+fn save_token(token: &str) {
+    match keyring::Entry::new("rustycord", "token").and_then(|entry| entry.set_password(token)) {
+        Ok(()) => tracing::info!("token saved to keyring"),
+        Err(error) => tracing::warn!("could not save token: {error}"),
     }
 }
 
