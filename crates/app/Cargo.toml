@@ -1,0 +1,11 @@
+[package]
+name = "rustycord"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Native Discord client for Linux"
+
+[dependencies]
+gpui-kit = "=0.11.0"
+rustycord-discord = { path = "../discord" }
