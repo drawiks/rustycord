@@ -64,10 +64,7 @@ impl Http {
         let mut attempt = 0u32;
         loop {
             attempt += 1;
-            self.inner
-                .limits
-                .acquire(&key, method != Method::GET)
-                .await;
+            self.inner.limits.acquire(&key, method != Method::GET).await;
 
             let url = if query.is_empty() {
                 format!("{BASE}{path}")
@@ -96,7 +93,9 @@ impl Http {
 
             let resp = req.send().await?;
             let status = resp.status().as_u16();
-            self.inner.limits.update(&key, resp.headers(), status == 429);
+            self.inner
+                .limits
+                .update(&key, resp.headers(), status == 429);
 
             if status == 401 {
                 return Err(Error::Unauthorized);
@@ -179,13 +178,22 @@ impl Http {
     }
 
     pub async fn me(&self) -> Result<User> {
-        let value = self.send(Method::GET, "/users/@me", "users_me", "", &[], None).await?;
+        let value = self
+            .send(Method::GET, "/users/@me", "users_me", "", &[], None)
+            .await?;
         Ok(serde_json::from_value(value)?)
     }
 
     pub async fn private_channels(&self) -> Result<Vec<Channel>> {
         let value = self
-            .send(Method::GET, "/users/@me/channels", "users_channels", "", &[], None)
+            .send(
+                Method::GET,
+                "/users/@me/channels",
+                "users_channels",
+                "",
+                &[],
+                None,
+            )
             .await?;
         Ok(serde_json::from_value(value)?)
     }
@@ -299,7 +307,12 @@ impl Http {
         Ok(())
     }
 
-    pub async fn ack(&self, channel_id: &str, message_id: &str, token: Option<&str>) -> Result<Value> {
+    pub async fn ack(
+        &self,
+        channel_id: &str,
+        message_id: &str,
+        token: Option<&str>,
+    ) -> Result<Value> {
         let body = match token {
             Some(token) => json!({ "token": token }),
             None => json!({ "manual": true, "mention_count": 0 }),
@@ -328,7 +341,12 @@ impl Http {
         Ok(())
     }
 
-    pub async fn add_reaction(&self, channel_id: &str, message_id: &str, emoji: &str) -> Result<()> {
+    pub async fn add_reaction(
+        &self,
+        channel_id: &str,
+        message_id: &str,
+        emoji: &str,
+    ) -> Result<()> {
         let emoji = urlencoding::encode(emoji);
         self.send(
             Method::PUT,
@@ -342,7 +360,12 @@ impl Http {
         Ok(())
     }
 
-    pub async fn remove_reaction(&self, channel_id: &str, message_id: &str, emoji: &str) -> Result<()> {
+    pub async fn remove_reaction(
+        &self,
+        channel_id: &str,
+        message_id: &str,
+        emoji: &str,
+    ) -> Result<()> {
         let emoji = urlencoding::encode(emoji);
         self.send(
             Method::DELETE,

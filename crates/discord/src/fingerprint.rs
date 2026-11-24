@@ -176,7 +176,10 @@ fn extract_build(text: &str) -> Option<u32> {
 async fn fetch_text(client: &wreq::Client, url: &str) -> Option<String> {
     let resp = client
         .get(url)
-        .header("accept", "text/html,application/xhtml+xml,application/javascript")
+        .header(
+            "accept",
+            "text/html,application/xhtml+xml,application/javascript",
+        )
         .send()
         .await
         .ok()?;

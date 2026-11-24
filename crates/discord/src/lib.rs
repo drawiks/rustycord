@@ -28,17 +28,15 @@ impl Discord {
         let fingerprint = Arc::new(fingerprint::Fingerprint::fetch().await);
         let http = rest::Http::new(token.into(), fingerprint.clone())?;
         let me = http.me().await?;
-        Ok((
-            Self {
-                http,
-                fingerprint,
-            },
-            me,
-        ))
+        Ok((Self { http, fingerprint }, me))
     }
 
     pub fn spawn_gateway(&self, events: mpsc::Sender<Event>) -> GatewayHandle {
-        gateway::spawn(self.http.token().to_string(), self.fingerprint.clone(), events)
+        gateway::spawn(
+            self.http.token().to_string(),
+            self.fingerprint.clone(),
+            events,
+        )
     }
 
     pub async fn history(
@@ -60,14 +58,21 @@ impl Discord {
     }
 
     pub async fn edit(&self, channel_id: &str, message_id: &str, content: &str) -> Result<Message> {
-        self.http.edit_message(channel_id, message_id, content).await
+        self.http
+            .edit_message(channel_id, message_id, content)
+            .await
     }
 
     pub async fn delete(&self, channel_id: &str, message_id: &str) -> Result<()> {
         self.http.delete_message(channel_id, message_id).await
     }
 
-    pub async fn ack(&self, channel_id: &str, message_id: &str, token: Option<&str>) -> Result<Value> {
+    pub async fn ack(
+        &self,
+        channel_id: &str,
+        message_id: &str,
+        token: Option<&str>,
+    ) -> Result<Value> {
         self.http.ack(channel_id, message_id, token).await
     }
 
@@ -80,7 +85,9 @@ impl Discord {
     }
 
     pub async fn unreact(&self, channel_id: &str, message_id: &str, emoji: &str) -> Result<()> {
-        self.http.remove_reaction(channel_id, message_id, emoji).await
+        self.http
+            .remove_reaction(channel_id, message_id, emoji)
+            .await
     }
 
     pub async fn channel(&self, channel_id: &str) -> Result<Channel> {

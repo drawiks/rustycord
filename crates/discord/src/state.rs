@@ -58,7 +58,10 @@ impl State {
                     list.retain(|m| &m.id != id);
                 }
             }
-            Event::TypingStart { channel_id, user_id } => {
+            Event::TypingStart {
+                channel_id,
+                user_id,
+            } => {
                 self.typing
                     .insert(channel_id.clone(), (user_id.clone(), Instant::now()));
             }
@@ -90,10 +93,12 @@ impl State {
     }
 
     pub fn channel(&self, id: &str) -> Option<&Channel> {
-        self.channels
-            .iter()
-            .find(|c| c.id == id)
-            .or_else(|| self.guilds.iter().flat_map(|g| &g.channels).find(|c| c.id == id))
+        self.channels.iter().find(|c| c.id == id).or_else(|| {
+            self.guilds
+                .iter()
+                .flat_map(|g| &g.channels)
+                .find(|c| c.id == id)
+        })
     }
 
     pub fn text_channels(&self, guild_id: &str) -> Vec<&Channel> {

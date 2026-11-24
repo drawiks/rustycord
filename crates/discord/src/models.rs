@@ -94,10 +94,8 @@ impl Channel {
     pub const ANNOUNCEMENT: u8 = 5;
 
     pub fn is_text(&self) -> bool {
-        matches!(
-            self.kind,
-            0 | 1 | 3 | 5 | 10 | 11 | 12 | 13 | 14 | 15 | 16
-        ) && self.kind != Self::CATEGORY
+        matches!(self.kind, 0 | 1 | 3 | 5 | 10 | 11 | 12 | 13 | 14 | 15 | 16)
+            && self.kind != Self::CATEGORY
     }
 
     pub fn display_name(&self) -> String {

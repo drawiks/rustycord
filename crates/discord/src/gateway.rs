@@ -139,24 +139,20 @@ async fn run_session(
     let mut established = false;
     let mut subscribed: HashSet<String> = HashSet::new();
 
-    let hello = match time::timeout(
-        Duration::from_secs(15),
-        next_payload(&mut read, &mut zlib),
-    )
-    .await
-    {
-        Ok(Incoming::Payload(v)) if v["op"].as_u64() == Some(10) => v,
-        _ => {
-            return (
-                established,
-                if session.is_some() {
-                    Action::Resume
-                } else {
-                    Action::Fresh
-                },
-            );
-        }
-    };
+    let hello =
+        match time::timeout(Duration::from_secs(15), next_payload(&mut read, &mut zlib)).await {
+            Ok(Incoming::Payload(v)) if v["op"].as_u64() == Some(10) => v,
+            _ => {
+                return (
+                    established,
+                    if session.is_some() {
+                        Action::Resume
+                    } else {
+                        Action::Fresh
+                    },
+                );
+            }
+        };
 
     let interval_ms = hello["d"]["heartbeat_interval"].as_u64().unwrap_or(41_250);
     let interval = Duration::from_millis(interval_ms.max(1_000));
@@ -321,8 +317,12 @@ fn subscribe_payload(ids: &[String]) -> Value {
 
 async fn dispatch(name: &str, data: &Value, tx: &mpsc::Sender<Event>) {
     let event = match name {
-        "MESSAGE_CREATE" => parse::<DiscordMessage>(name, data).map(|m| Event::MessageCreate(Box::new(m))),
-        "MESSAGE_UPDATE" => parse::<DiscordMessage>(name, data).map(|m| Event::MessageUpdate(Box::new(m))),
+        "MESSAGE_CREATE" => {
+            parse::<DiscordMessage>(name, data).map(|m| Event::MessageCreate(Box::new(m)))
+        }
+        "MESSAGE_UPDATE" => {
+            parse::<DiscordMessage>(name, data).map(|m| Event::MessageUpdate(Box::new(m)))
+        }
         "MESSAGE_DELETE" => match (data["id"].as_str(), data["channel_id"].as_str()) {
             (Some(id), Some(channel_id)) => Some(Event::MessageDelete {
                 id: id.to_string(),
@@ -345,8 +345,12 @@ async fn dispatch(name: &str, data: &Value, tx: &mpsc::Sender<Event>) {
             }),
             _ => None,
         },
-        "RELATIONSHIP_ADD" => parse::<Relationship>(name, data).map(|r| Event::RelationshipAdd(Box::new(r))),
-        "RELATIONSHIP_REMOVE" => data["id"].as_str().map(|id| Event::RelationshipRemove { id: id.to_string() }),
+        "RELATIONSHIP_ADD" => {
+            parse::<Relationship>(name, data).map(|r| Event::RelationshipAdd(Box::new(r)))
+        }
+        "RELATIONSHIP_REMOVE" => data["id"]
+            .as_str()
+            .map(|id| Event::RelationshipRemove { id: id.to_string() }),
         "USER_UPDATE" => parse::<User>(name, data).map(|u| Event::UserUpdate(Box::new(u))),
         _ => None,
     };

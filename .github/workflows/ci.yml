@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98.1"
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  test:
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      CMAKE_GENERATOR: Ninja
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98.1"
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: test-${{ matrix.os }}
+      - name: Install NASM
+        if: runner.os == 'Windows'
+        run: choco install nasm --no-progress -y
+      - name: Configure libclang
+        if: runner.os == 'Windows'
+        run: echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libxkbcommon-dev libwayland-dev libx11-dev libxcb1-dev libfontconfig1-dev libfreetype-dev libclang-dev libvulkan-dev libegl-dev
+      - name: Clippy
+        run: cargo clippy -p rustycord-discord --all-targets -- -D warnings
+      - name: Test
+        run: cargo test -p rustycord-discord
+
+  windows:
+    name: Windows build
+    runs-on: windows-latest
+    env:
+      CMAKE_GENERATOR: Ninja
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98.1"
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: windows-app
+      - name: Install NASM
+        run: choco install nasm --no-progress -y
+      - name: Configure libclang
+        run: echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
+      - name: Clippy
+        run: cargo clippy -p rustycord --all-targets -- -D warnings
+      - name: Build
+        run: cargo build --release -p rustycord
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rustycord-windows-x64
+          path: target/release/rustycord.exe
+          if-no-files-found: error
+
+  linux:
+    name: Linux check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98.1"
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-app
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libxkbcommon-dev libwayland-dev libx11-dev libxcb1-dev libfontconfig1-dev libfreetype-dev libclang-dev libvulkan-dev libegl-dev
+      - name: Clippy
+        run: cargo clippy -p rustycord --all-targets -- -D warnings
