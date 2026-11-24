@@ -6265,6 +6265,7 @@ dependencies = [
  "gpui-kit",
  "http",
  "keyring",
+ "open",
  "rustycord-discord",
  "tokio",
  "tracing",

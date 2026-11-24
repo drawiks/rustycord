@@ -218,6 +218,13 @@ impl State {
         self.guilds.iter().find(|g| g.id == id)
     }
 
+    pub fn role(&self, id: &str) -> Option<&crate::models::Role> {
+        self.guilds
+            .iter()
+            .flat_map(|guild| &guild.roles)
+            .find(|role| role.id == id)
+    }
+
     pub fn channel_display_name(&self, channel: &Channel) -> String {
         if let Some(name) = &channel.name {
             return name.clone();

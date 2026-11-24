@@ -1,9 +1,23 @@
+use std::ops::Range;
+
 use gpui_kit::{
     FontStyle, FontWeight, HighlightStyle, StrikethroughStyle, StyledText, TextStyle, px, rgb,
 };
-use rustycord_discord::State;
+use rustycord_discord::{Id, State};
 
 use crate::theme::*;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Target {
+    Url(String),
+    User(Id),
+    Channel(Id),
+}
+
+pub struct Rendered {
+    pub text: StyledText,
+    pub targets: Vec<(Range<usize>, Target)>,
+}
 
 #[derive(Clone, Copy, Default, PartialEq)]
 struct Style {
@@ -12,12 +26,18 @@ struct Style {
     strike: bool,
     code: bool,
     dim: bool,
+    mention: bool,
+    link: bool,
 }
 
-pub fn build(content: &str, state: &State) -> StyledText {
-    let spans = spans(&resolve(content, state));
-    let joined: String = spans.iter().map(|(_, text)| text.as_str()).collect();
+struct Span {
+    style: Style,
+    text: String,
+    target: Option<Target>,
+}
 
+pub fn build(content: &str, state: &State) -> Rendered {
+    let spans = spans(content, state);
     let base = TextStyle {
         color: rgb(TEXT).into(),
         font_size: px(14.).into(),
@@ -25,38 +45,56 @@ pub fn build(content: &str, state: &State) -> StyledText {
         ..TextStyle::default()
     };
 
-    let runs = spans
-        .iter()
-        .map(|(style, text)| {
-            let highlight = HighlightStyle {
-                font_weight: style.bold.then_some(FontWeight::BOLD),
-                font_style: style.italic.then_some(FontStyle::Italic),
-                strikethrough: style.strike.then_some(StrikethroughStyle {
-                    thickness: px(1.),
-                    color: None,
-                }),
-                background_color: style.code.then(|| rgb(CODE_BG).into()),
-                color: if style.code {
-                    Some(rgb(CODE_TEXT).into())
-                } else if style.dim {
-                    Some(rgb(MUTED).into())
-                } else {
-                    None
-                },
-                ..Default::default()
-            };
-            base.clone().highlight(highlight).to_run(text.len())
-        })
-        .collect();
+    let mut joined = String::new();
+    let mut targets = Vec::new();
+    let mut runs = Vec::new();
+    for span in spans {
+        let start = joined.len();
+        joined.push_str(&span.text);
+        let end = joined.len();
+        if let Some(target) = &span.target {
+            targets.push((start..end, target.clone()));
+        }
 
-    StyledText::new(joined).with_runs(runs)
+        let highlight = HighlightStyle {
+            font_weight: span.style.bold.then_some(FontWeight::BOLD),
+            font_style: span.style.italic.then_some(FontStyle::Italic),
+            strikethrough: span.style.strike.then_some(StrikethroughStyle {
+                thickness: px(1.),
+                color: None,
+            }),
+            background_color: if span.style.code {
+                Some(rgb(CODE_BG).into())
+            } else if span.style.mention {
+                Some(rgb(0x3c4270).into())
+            } else {
+                None
+            },
+            color: if span.style.code {
+                Some(rgb(CODE_TEXT).into())
+            } else if span.style.link || span.style.mention {
+                Some(rgb(LINK).into())
+            } else if span.style.dim {
+                Some(rgb(MUTED).into())
+            } else {
+                None
+            },
+            ..Default::default()
+        };
+        runs.push(base.clone().highlight(highlight).to_run(span.text.len()));
+    }
+
+    Rendered {
+        text: StyledText::new(joined).with_runs(runs),
+        targets,
+    }
 }
 
-fn spans(resolved: &str) -> Vec<(Style, String)> {
+fn spans(content: &str, state: &State) -> Vec<Span> {
     let mut spans = Vec::new();
-    for (index, part) in resolved.split("```").enumerate() {
+    for (index, part) in content.split("```").enumerate() {
         if index % 2 == 0 {
-            lines(part, &mut spans);
+            lines(part, state, &mut spans);
         } else {
             let body = part.split_once('\n').map(|(_, body)| body).unwrap_or(part);
             push(
@@ -66,13 +104,14 @@ fn spans(resolved: &str) -> Vec<(Style, String)> {
                     ..Default::default()
                 },
                 body,
+                None,
             );
         }
     }
     spans
 }
 
-fn lines(text: &str, spans: &mut Vec<(Style, String)>) {
+fn lines(text: &str, state: &State, spans: &mut Vec<Span>) {
     for line in text.split_inclusive('\n') {
         let (body, newline) = match line.strip_suffix('\n') {
             Some(body) => (body, true),
@@ -86,6 +125,7 @@ fn lines(text: &str, spans: &mut Vec<(Style, String)>) {
                     ..Default::default()
                 },
                 "▏ ",
+                None,
             );
             push(
                 spans,
@@ -94,115 +134,172 @@ fn lines(text: &str, spans: &mut Vec<(Style, String)>) {
                     ..Default::default()
                 },
                 quote,
+                None,
             );
         } else {
-            inline(body, spans);
+            inline(body, state, spans);
         }
         if newline {
-            push(spans, Style::default(), "\n");
+            push(spans, Style::default(), "\n", None);
         }
     }
 }
 
-fn inline(text: &str, spans: &mut Vec<(Style, String)>) {
+fn inline(text: &str, state: &State, spans: &mut Vec<Span>) {
+    let chars: Vec<char> = text.chars().collect();
     let mut style = Style::default();
     let mut buffer = String::new();
-    let mut chars = text.chars().peekable();
-    while let Some(c) = chars.next() {
+    let mut i = 0;
+
+    while i < chars.len() {
+        let c = chars[i];
         match c {
             '\\' => {
-                if let Some(escaped) = chars.next() {
-                    buffer.push(escaped);
+                if let Some(escaped) = chars.get(i + 1) {
+                    buffer.push(*escaped);
+                    i += 2;
+                } else {
+                    i += 1;
                 }
             }
-            '*' if chars.peek() == Some(&'*') => {
-                chars.next();
-                flush(&mut buffer, &style, spans);
+            '*' if chars.get(i + 1) == Some(&'*') => {
+                flush(&mut buffer, style, spans);
                 style.bold = !style.bold;
+                i += 2;
             }
-            '~' if chars.peek() == Some(&'~') => {
-                chars.next();
-                flush(&mut buffer, &style, spans);
+            '~' if chars.get(i + 1) == Some(&'~') => {
+                flush(&mut buffer, style, spans);
                 style.strike = !style.strike;
+                i += 2;
             }
-            '_' if chars.peek() == Some(&'_') => {
-                chars.next();
-                flush(&mut buffer, &style, spans);
+            '_' if chars.get(i + 1) == Some(&'_') => {
+                flush(&mut buffer, style, spans);
+                i += 2;
             }
             '*' | '_' => {
-                flush(&mut buffer, &style, spans);
+                flush(&mut buffer, style, spans);
                 style.italic = !style.italic;
+                i += 1;
             }
             '`' => {
-                flush(&mut buffer, &style, spans);
+                flush(&mut buffer, style, spans);
                 style.code = !style.code;
+                i += 1;
             }
-            _ => buffer.push(c),
+            '<' if !style.code => {
+                if let Some((display, target, next)) = token(&chars, i, state) {
+                    flush(&mut buffer, style, spans);
+                    let mention = Style {
+                        mention: true,
+                        ..style
+                    };
+                    push(spans, mention, &display, target);
+                    i = next;
+                } else {
+                    buffer.push(c);
+                    i += 1;
+                }
+            }
+            'h' if !style.code && is_url_start(&chars[i..]) => {
+                flush(&mut buffer, style, spans);
+                let mut j = i;
+                while j < chars.len()
+                    && !chars[j].is_whitespace()
+                    && !matches!(chars[j], '>' | '"' | '<')
+                {
+                    j += 1;
+                }
+                let raw: String = chars[i..j].iter().collect();
+                let url = raw
+                    .trim_end_matches([',', '.', ';', ':', '!', '?', ')'])
+                    .to_string();
+                let consumed = url.chars().count();
+                let link = Style {
+                    link: true,
+                    ..style
+                };
+                push(spans, link, &url, Some(Target::Url(url.clone())));
+                i += consumed;
+            }
+            _ => {
+                buffer.push(c);
+                i += 1;
+            }
         }
     }
-    flush(&mut buffer, &style, spans);
+    flush(&mut buffer, style, spans);
 }
 
-fn flush(buffer: &mut String, style: &Style, spans: &mut Vec<(Style, String)>) {
+fn token(chars: &[char], start: usize, state: &State) -> Option<(String, Option<Target>, usize)> {
+    let end = start + chars[start..].iter().position(|c| *c == '>')?;
+    if end - start > 96 {
+        return None;
+    }
+    let inner: String = chars[start + 1..end].iter().collect();
+
+    let (display, target) = if let Some(id) = inner.strip_prefix("@&") {
+        let name = state
+            .role(id)
+            .map(|role| format!("@{}", role.name))
+            .unwrap_or_else(|| "@role".to_string());
+        (name, None)
+    } else if let Some(id) = inner.strip_prefix("@!").or_else(|| inner.strip_prefix('@')) {
+        let name = state
+            .user(id)
+            .map(|user| format!("@{}", user.display_name()))
+            .unwrap_or_else(|| format!("@{id}"));
+        (name, Some(Target::User(id.to_string())))
+    } else if let Some(id) = inner.strip_prefix('#') {
+        let name = state
+            .channel(id)
+            .map(|channel| format!("#{}", state.channel_display_name(channel)))
+            .unwrap_or_else(|| format!("#{id}"));
+        (name, Some(Target::Channel(id.to_string())))
+    } else if let Some(rest) = inner.strip_prefix("a:").or_else(|| inner.strip_prefix(':')) {
+        match rest.split(':').next() {
+            Some(name) if !name.is_empty() => (format!(":{name}:"), None),
+            _ => return None,
+        }
+    } else {
+        return None;
+    };
+
+    Some((display, target, end + 1))
+}
+
+fn is_url_start(chars: &[char]) -> bool {
+    starts_with(chars, "https://") || starts_with(chars, "http://")
+}
+
+fn starts_with(chars: &[char], pattern: &str) -> bool {
+    let pattern: Vec<char> = pattern.chars().collect();
+    chars.len() >= pattern.len() && chars[..pattern.len()] == pattern[..]
+}
+
+fn flush(buffer: &mut String, style: Style, spans: &mut Vec<Span>) {
     if buffer.is_empty() {
         return;
     }
     let text = std::mem::take(buffer);
-    push(spans, *style, &text);
+    push(spans, style, &text, None);
 }
 
-fn push(spans: &mut Vec<(Style, String)>, style: Style, text: &str) {
+fn push(spans: &mut Vec<Span>, style: Style, text: &str, target: Option<Target>) {
     if text.is_empty() {
         return;
     }
-    if let Some((last_style, last_text)) = spans.last_mut()
-        && *last_style == style
+    if let Some(last) = spans.last_mut()
+        && last.style == style
+        && last.target == target
     {
-        last_text.push_str(text);
+        last.text.push_str(text);
         return;
     }
-    spans.push((style, text.to_string()));
-}
-
-fn resolve(text: &str, state: &State) -> String {
-    let mut output = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(start) = rest.find('<') {
-        output.push_str(&rest[..start]);
-        let after = &rest[start..];
-        let Some(end) = after.find('>') else {
-            output.push_str(after);
-            return output;
-        };
-        let token = &after[1..end];
-        let raw = &after[..=end];
-
-        let replacement = if token.starts_with("@&") {
-            "@role".to_string()
-        } else if let Some(id) = token.strip_prefix("@!").or_else(|| token.strip_prefix('@')) {
-            state
-                .user(id)
-                .map(|user| format!("@{}", user.display_name()))
-                .unwrap_or_else(|| format!("@{id}"))
-        } else if let Some(id) = token.strip_prefix('#') {
-            state
-                .channel(id)
-                .map(|channel| format!("#{}", channel.display_name()))
-                .unwrap_or_else(|| format!("#{id}"))
-        } else if let Some(rest) = token.strip_prefix("a:").or_else(|| token.strip_prefix(':')) {
-            match rest.split(':').next() {
-                Some(name) if !name.is_empty() => format!(":{name}:"),
-                _ => raw.to_string(),
-            }
-        } else {
-            raw.to_string()
-        };
-
-        output.push_str(&replacement);
-        rest = &after[end + 1..];
-    }
-    output.push_str(rest);
-    output
+    spans.push(Span {
+        style,
+        text: text.to_string(),
+        target,
+    });
 }
 
 #[cfg(test)]
@@ -210,33 +307,35 @@ mod tests {
     use super::*;
     use rustycord_discord::User;
 
-    fn text(spans: &[(Style, String)]) -> String {
-        spans.iter().map(|(_, text)| text.as_str()).collect()
+    fn joined(spans: &[Span]) -> String {
+        spans.iter().map(|span| span.text.as_str()).collect()
     }
 
-    fn style_of(spans: &[(Style, String)], needle: &str) -> Style {
-        spans
+    fn style_of<'a>(spans: &'a [Span], needle: &str) -> &'a Style {
+        &spans
             .iter()
-            .find(|(_, text)| text.contains(needle))
-            .map(|(style, _)| *style)
+            .find(|span| span.text.contains(needle))
             .expect("span")
+            .style
     }
 
     #[test]
     fn strips_inline_markers() {
-        let out = spans("**bold** and *italic* and ~~gone~~");
-        assert_eq!(text(&out), "bold and italic and gone");
-        assert!(style_of(&out, "bold").bold);
-        assert!(style_of(&out, "italic").italic);
-        assert!(style_of(&out, "gone").strike);
+        let state = State::default();
+        let spans = spans("**bold** and *italic* and ~~gone~~", &state);
+        assert_eq!(joined(&spans), "bold and italic and gone");
+        assert!(style_of(&spans, "bold").bold);
+        assert!(style_of(&spans, "italic").italic);
+        assert!(style_of(&spans, "gone").strike);
     }
 
     #[test]
     fn handles_code_blocks_and_inline_code() {
-        let out = spans("run `cargo test`\n```rust\nfn main() {}\n```\n");
-        assert_eq!(text(&out), "run cargo test\nfn main() {}\n\n");
-        assert!(style_of(&out, "cargo test").code);
-        assert!(style_of(&out, "fn main").code);
+        let state = State::default();
+        let spans = spans("run `cargo test`\n```rust\nfn main() {}\n```\n", &state);
+        assert_eq!(joined(&spans), "run cargo test\nfn main() {}\n\n");
+        assert!(style_of(&spans, "cargo test").code);
+        assert!(style_of(&spans, "fn main").code);
     }
 
     #[test]
@@ -250,13 +349,34 @@ mod tests {
                 ..Default::default()
             },
         );
-        let resolved = resolve("hi <@42> <@!42> <:wave:123> <@999>", &state);
-        assert_eq!(resolved, "hi @alice @alice :wave: @999");
+        let spans = spans("hi <@42> <@!42> <:wave:123> <@999>", &state);
+        assert_eq!(joined(&spans), "hi @alice @alice :wave: @999");
+        let mention = spans
+            .iter()
+            .find(|span| span.text == "@alice")
+            .expect("mention span");
+        assert_eq!(mention.target, Some(Target::User("42".to_string())));
+    }
+
+    #[test]
+    fn detects_urls() {
+        let state = State::default();
+        let spans = spans("see https://example.com/a?b=1).", &state);
+        assert_eq!(joined(&spans), "see https://example.com/a?b=1).");
+        let link = spans
+            .iter()
+            .find(|span| span.style.link)
+            .expect("link span");
+        assert_eq!(link.text, "https://example.com/a?b=1");
+        assert_eq!(
+            link.target,
+            Some(Target::Url("https://example.com/a?b=1".to_string()))
+        );
     }
 
     #[test]
     fn keeps_unknown_tags() {
         let state = State::default();
-        assert_eq!(resolve("a <b> c", &state), "a <b> c");
+        assert_eq!(joined(&spans("a <b> c", &state)), "a <b> c");
     }
 }

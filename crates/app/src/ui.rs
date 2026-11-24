@@ -312,6 +312,32 @@ impl App {
         cx.notify();
     }
 
+    fn open_target(
+        &mut self,
+        target: markdown::Target,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let channel_id = match target {
+            markdown::Target::Channel(id) => Some(id),
+            markdown::Target::User(id) => self
+                .state
+                .channels
+                .iter()
+                .find(|channel| {
+                    channel.kind == Channel::DM
+                        && (channel.recipient_ids.contains(&id)
+                            || channel.recipients.iter().any(|user| user.id == id))
+                })
+                .map(|channel| channel.id.clone()),
+            markdown::Target::Url(_) => None,
+        };
+        if let Some(channel_id) = channel_id {
+            self.select_channel(channel_id, cx);
+            self.focus_composer(window, cx);
+        }
+    }
+
     fn action_button(
         &self,
         id: gpui_kit::SharedString,
@@ -989,7 +1015,33 @@ impl App {
         } else {
             message.content.clone()
         };
-        content = content.child(markdown::build(&text, &self.state));
+        let rendered = markdown::build(&text, &self.state);
+        let targets = rendered.targets;
+        let click_ranges: Vec<std::ops::Range<usize>> =
+            targets.iter().map(|(range, _)| range.clone()).collect();
+        let entity = cx.entity().downgrade();
+        content = content.child(
+            gpui_kit::InteractiveText::new(
+                gpui_kit::SharedString::from(format!("content-{}", message.id)),
+                rendered.text,
+            )
+            .on_click(click_ranges, move |index, window, cx| {
+                let Some((_, target)) = targets.get(index) else {
+                    return;
+                };
+                match target {
+                    markdown::Target::Url(url) => {
+                        if let Err(error) = open::that(url) {
+                            tracing::warn!("failed to open url: {error}");
+                        }
+                    }
+                    other => {
+                        let _ = entity
+                            .update(cx, |this, cx| this.open_target(other.clone(), window, cx));
+                    }
+                }
+            }),
+        );
 
         for attachment in &message.attachments {
             if is_image(&attachment.content_type, &attachment.filename) {
