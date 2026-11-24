@@ -32,7 +32,7 @@ The binary is `target\release\rustycord.exe`.
 ### Linux
 
 ```bash
-sudo apt-get install pkg-config libxkbcommon-dev libwayland-dev libx11-dev libxcb1-dev \
+sudo apt-get install pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb1-dev \
   libfontconfig1-dev libfreetype-dev libclang-dev libvulkan-dev libegl-dev
 cargo build --release -p rustycord
 ```
