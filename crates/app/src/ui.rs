@@ -202,11 +202,9 @@ impl App {
                 if received == 0 {
                     self.pending_anchor = None;
                 }
-                if Some(&channel_id) == self.selected_channel.as_ref() {
-                    if first_load {
-                        self.scroll.scroll_to_bottom();
-                        self.mark_read(&channel_id, true);
-                    }
+                if Some(&channel_id) == self.selected_channel.as_ref() && first_load {
+                    self.scroll.scroll_to_bottom();
+                    self.mark_read(&channel_id, true);
                 }
             }
         }
@@ -929,12 +927,12 @@ impl App {
             .h_full()
             .overflow_y_scroll()
             .track_scroll(&self.scroll)
-            .on_scroll_wheel(cx.listener(
-                |this, _event: &gpui_kit::ScrollWheelEvent, _window, cx| {
+            .on_scroll(
+                cx.listener(|this, _event: &gpui_kit::ScrollEvent, _window, cx| {
                     this.maybe_load_older();
                     cx.notify();
-                },
-            ))
+                }),
+            )
             .flex()
             .flex_col()
             .gap(px(2.))
