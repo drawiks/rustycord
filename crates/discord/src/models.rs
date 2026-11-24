@@ -71,6 +71,36 @@ pub struct Role {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
+pub struct Member {
+    #[serde(default)]
+    pub user: User,
+    #[serde(default)]
+    pub user_id: Option<Id>,
+    #[serde(default)]
+    pub nick: Option<String>,
+    #[serde(default)]
+    pub roles: Vec<Id>,
+    #[serde(default)]
+    pub joined_at: Option<String>,
+}
+
+impl Member {
+    pub fn id(&self) -> &str {
+        if !self.user.id.is_empty() {
+            &self.user.id
+        } else {
+            self.user_id.as_deref().unwrap_or_default()
+        }
+    }
+
+    pub fn display_name(&self) -> &str {
+        self.nick
+            .as_deref()
+            .unwrap_or_else(|| self.user.display_name())
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct Guild {
     pub id: Id,
     pub name: String,
@@ -84,6 +114,10 @@ pub struct Guild {
     pub roles: Vec<Role>,
     #[serde(default)]
     pub member_count: u32,
+    #[serde(default, deserialize_with = "null_default")]
+    pub members: Vec<Member>,
+    #[serde(default, deserialize_with = "null_default")]
+    pub presences: Vec<Presence>,
     #[serde(default)]
     pub unavailable: bool,
 }
@@ -317,6 +351,8 @@ pub struct Ready {
     pub users: Vec<User>,
     #[serde(default, deserialize_with = "null_default")]
     pub presences: Vec<Presence>,
+    #[serde(default, deserialize_with = "null_default")]
+    pub merged_members: Vec<Vec<Member>>,
     #[serde(default)]
     pub merged_presences: Option<MergedPresences>,
     #[serde(default)]
@@ -324,11 +360,21 @@ pub struct Ready {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
+pub struct SupplementalGuild {
+    #[serde(default)]
+    pub id: Id,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct ReadySupplemental {
+    #[serde(default, deserialize_with = "null_default")]
+    pub guilds: Vec<SupplementalGuild>,
     #[serde(default, deserialize_with = "null_default")]
     pub lazy_private_channels: Vec<Channel>,
     #[serde(default, deserialize_with = "null_default")]
     pub users: Vec<User>,
+    #[serde(default, deserialize_with = "null_default")]
+    pub merged_members: Vec<Vec<Member>>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

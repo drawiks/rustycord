@@ -191,6 +191,49 @@ pub(super) fn user_avatar(
         )
 }
 
+pub(super) fn large_avatar(
+    user: Option<&User>,
+    fallback_name: &str,
+    presence: &str,
+) -> impl IntoElement {
+    let visual = match user {
+        Some(user) => gpui_kit::img(avatar_url(user))
+            .size(px(64.))
+            .into_any_element(),
+        None => div()
+            .size(px(64.))
+            .rounded(px(32.))
+            .bg(rgb(ACCENT))
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_size(px(22.))
+            .font_weight(FontWeight::BOLD)
+            .text_color(rgb(0xffffff))
+            .child(initials(fallback_name))
+            .into_any_element(),
+    };
+
+    div()
+        .relative()
+        .child(
+            div()
+                .size(px(64.))
+                .rounded(px(32.))
+                .overflow_hidden()
+                .border_2()
+                .border_color(rgb(PANEL))
+                .child(visual),
+        )
+        .child(
+            div()
+                .absolute()
+                .bottom(px(1.))
+                .right(px(1.))
+                .child(presence_dot(presence)),
+        )
+}
+
 pub(super) fn dm_user<'a>(state: &'a State, channel: &'a Channel) -> Option<&'a User> {
     channel
         .recipients

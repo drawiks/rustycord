@@ -180,7 +180,18 @@ impl App {
         compact: bool,
         entity: &WeakEntity<App>,
     ) -> AnyElement {
-        let author = message.author.display_name().to_string();
+        let (author, author_color) = match &message.guild_id {
+            Some(guild_id) => (
+                self.state.member_display_name(guild_id, &message.author),
+                self.state.member_role_color(guild_id, &message.author.id),
+            ),
+            None => (message.author.display_name().to_string(), 0),
+        };
+        let author_color = if author_color == 0 {
+            0xf2f3f5
+        } else {
+            author_color
+        };
         let time = format_time(&message.timestamp);
         let edited = message.edited_timestamp.is_some();
         let is_mine = self
@@ -483,13 +494,28 @@ impl App {
             ));
         }
 
-        let mut header = div().flex().items_baseline().gap(px(8.)).child(
+        let mut header = div().flex().items_baseline().gap(px(8.)).child({
+            let weak = entity.clone();
+            let user_id = message.author.id.clone();
+            let guild_id = message.guild_id.clone();
             div()
+                .id(ElementId::named_usize("author-name", snowflake_id))
+                .cursor_pointer()
+                .hover(|style| style.underline())
                 .text_size(px(14.))
                 .font_weight(FontWeight::SEMIBOLD)
-                .text_color(rgb(0xf2f3f5))
-                .child(author),
-        );
+                .text_color(rgb(author_color))
+                .child(author)
+                .on_click(move |_, _, cx| {
+                    let _ = weak.update(cx, |app, cx| {
+                        app.right_pane = Some(RightPane::Profile {
+                            user_id: user_id.clone(),
+                            guild_id: guild_id.clone(),
+                        });
+                        cx.notify();
+                    });
+                })
+        });
         header = header.child(
             div()
                 .text_size(px(11.))
@@ -515,7 +541,23 @@ impl App {
                 .child(time)
                 .into_any_element()
         } else {
-            avatar(&message.author).into_any_element()
+            let weak = entity.clone();
+            let user_id = message.author.id.clone();
+            let guild_id = message.guild_id.clone();
+            div()
+                .id(ElementId::named_usize("avatar", snowflake_id))
+                .cursor_pointer()
+                .child(avatar(&message.author))
+                .on_click(move |_, _, cx| {
+                    let _ = weak.update(cx, |app, cx| {
+                        app.right_pane = Some(RightPane::Profile {
+                            user_id: user_id.clone(),
+                            guild_id: guild_id.clone(),
+                        });
+                        cx.notify();
+                    });
+                })
+                .into_any_element()
         };
 
         let mut column = div().flex().flex_col().flex_1().min_w(px(0.));
@@ -619,6 +661,67 @@ impl App {
             );
         } else {
             bar = bar.child(div().flex_1());
+        }
+
+        if let Some(user_id) = channel.and_then(|channel| {
+            if is_dm {
+                channel
+                    .recipients
+                    .first()
+                    .map(|user| user.id.clone())
+                    .or_else(|| channel.recipient_ids.first().cloned())
+            } else {
+                None
+            }
+        }) {
+            bar = bar.child(
+                div()
+                    .id("dm-profile")
+                    .size(px(28.))
+                    .rounded(px(4.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_color(rgb(MUTED))
+                    .cursor_pointer()
+                    .hover(|style| style.bg(rgb(RAIL_HOVER)).text_color(rgb(TEXT_BRIGHT)))
+                    .child(gpui_kit::component::Icon::new(IconName::UserRound).size(px(17.)))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.right_pane = Some(RightPane::Profile {
+                            user_id: user_id.clone(),
+                            guild_id: None,
+                        });
+                        cx.notify();
+                    })),
+            );
+        }
+
+        if self.selected_guild.is_some() {
+            let open = matches!(self.right_pane, Some(RightPane::Members));
+            bar = bar.child(
+                div()
+                    .id("toggle-members")
+                    .size(px(28.))
+                    .rounded(px(4.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_color(rgb(if open { 0xffffff } else { MUTED }))
+                    .bg(if open { rgb(ACTIVE) } else { rgb(CHAT) })
+                    .cursor_pointer()
+                    .hover(|style| style.bg(rgb(RAIL_HOVER)).text_color(rgb(TEXT_BRIGHT)))
+                    .child(gpui_kit::component::Icon::new(IconName::Users).size(px(17.)))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        if matches!(this.right_pane, Some(RightPane::Members)) {
+                            this.right_pane = None;
+                        } else {
+                            this.right_pane = Some(RightPane::Members);
+                            this.sync_members();
+                            this.request_members();
+                        }
+                        cx.notify();
+                    })),
+            );
         }
 
         bar = bar.child(

@@ -28,6 +28,10 @@ pub enum Command {
     Typing {
         channel_id: String,
     },
+    SubscribeMembers {
+        guild_id: String,
+        channel_id: String,
+    },
     React {
         channel_id: String,
         message_id: String,
@@ -110,7 +114,7 @@ async fn run(
     }
 
     let (gateway_tx, mut gateway_rx) = tokio::sync::mpsc::channel(1024);
-    let _gateway = client.spawn_gateway(gateway_tx);
+    let gateway = client.spawn_gateway(gateway_tx);
 
     loop {
         tokio::select! {
@@ -118,13 +122,21 @@ async fn run(
                 let _ = ui.send(UiEvent::Discord(event));
             }
             Some(command) = commands.recv() => {
-                let client = client.clone();
-                let ui = ui.clone();
-                tokio::spawn(async move {
-                    if let Err(error) = handle(client, command, &ui).await {
-                        let _ = ui.send(UiEvent::Error(error.to_string()));
-                    }
-                });
+                if let Command::SubscribeMembers {
+                    guild_id,
+                    channel_id,
+                } = command
+                {
+                    gateway.subscribe_members(&guild_id, &channel_id);
+                } else {
+                    let client = client.clone();
+                    let ui = ui.clone();
+                    tokio::spawn(async move {
+                        if let Err(error) = handle(client, command, &ui).await {
+                            let _ = ui.send(UiEvent::Error(error.to_string()));
+                        }
+                    });
+                }
             }
             else => break,
         }
@@ -184,6 +196,7 @@ async fn handle(
         Command::Typing { channel_id } => {
             client.typing(&channel_id).await?;
         }
+        Command::SubscribeMembers { .. } => {}
         Command::React {
             channel_id,
             message_id,

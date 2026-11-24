@@ -1,5 +1,6 @@
 mod chat;
 mod login;
+mod members;
 mod rail;
 mod sidebar;
 mod widgets;
@@ -56,6 +57,8 @@ pub struct App {
     collapsed: HashSet<Id>,
     image_viewer: Option<String>,
     unread_marker: Option<Id>,
+    right_pane: Option<RightPane>,
+    member_rows: Vec<MemberRow>,
     pending_token: Option<String>,
     ack_tokens: HashMap<Id, String>,
     last_ack: Option<Instant>,
@@ -119,6 +122,8 @@ impl App {
             collapsed: HashSet::new(),
             image_viewer: None,
             unread_marker: None,
+            right_pane: None,
+            member_rows: Vec::new(),
             pending_token: None,
             ack_tokens: HashMap::new(),
             last_ack: None,
@@ -216,6 +221,8 @@ impl App {
                     | Event::ChannelCreate(_)
                     | Event::ChannelUpdate(_)
                     | Event::ChannelDelete(_)
+                    | Event::MemberUpdate { .. }
+                    | Event::MemberRemove { .. }
                     | Event::UserUpdate(_) => {
                         self.text_cache.clear();
                         names_changed = true;
@@ -229,6 +236,23 @@ impl App {
                 self.sync_transcript(cx);
                 if names_changed {
                     self.transcript.update(cx, |state, cx| state.remeasure(cx));
+                }
+                let members_changed = matches!(
+                    &event,
+                    Event::MemberUpdate { .. }
+                        | Event::MemberRemove { .. }
+                        | Event::MemberChunk { .. }
+                        | Event::PresenceUpdate(_)
+                        | Event::GuildCreate(_)
+                        | Event::GuildUpdate(_)
+                        | Event::Users(_)
+                        | Event::Ready(_)
+                );
+                if members_changed && matches!(self.right_pane, Some(RightPane::Members)) {
+                    self.sync_members();
+                }
+                if ready && matches!(self.right_pane, Some(RightPane::Members)) {
+                    self.request_members();
                 }
                 if let Event::MessageCreate(message) = &event
                     && Some(&message.channel_id) == self.selected_channel.as_ref()
@@ -266,6 +290,14 @@ impl App {
     }
 
     fn select_guild(&mut self, guild: Option<Id>, cx: &mut Context<Self>) {
+        if let Some(RightPane::Profile {
+            guild_id: Some(profile_guild),
+            ..
+        }) = &self.right_pane
+            && Some(profile_guild) != guild.as_ref()
+        {
+            self.right_pane = None;
+        }
         self.selected_guild = guild.clone();
         let channel = guild
             .as_ref()
@@ -282,6 +314,10 @@ impl App {
             self.select_channel(channel, cx);
         } else {
             cx.notify();
+        }
+        if matches!(self.right_pane, Some(RightPane::Members)) {
+            self.sync_members();
+            self.request_members();
         }
     }
 
@@ -304,6 +340,9 @@ impl App {
         }
         self.mark_read(&channel_id, true);
         self.sync_transcript(cx);
+        if matches!(self.right_pane, Some(RightPane::Members)) {
+            self.request_members();
+        }
         cx.notify();
     }
 
@@ -382,6 +421,82 @@ impl App {
                 .or_default();
             read.id = channel_id.to_string();
             read.last_message_id = Some(message_id);
+        }
+    }
+
+    fn request_members(&self) {
+        let Some(guild_id) = self.selected_guild.clone() else {
+            return;
+        };
+        let channel_id = self
+            .selected_channel
+            .clone()
+            .filter(|id| {
+                self.state
+                    .channel(id)
+                    .and_then(|channel| channel.guild_id.as_deref())
+                    == Some(guild_id.as_str())
+            })
+            .or_else(|| {
+                self.state
+                    .text_channels(&guild_id)
+                    .first()
+                    .map(|channel| channel.id.clone())
+            });
+        if let (Some(net), Some(channel_id)) = (&self.net, channel_id) {
+            net.send(Command::SubscribeMembers {
+                guild_id,
+                channel_id,
+            });
+        }
+    }
+
+    fn sync_members(&mut self) {
+        self.member_rows.clear();
+        let Some(guild_id) = self.selected_guild.clone() else {
+            return;
+        };
+
+        let mut online: Vec<(i32, String, Id)> = Vec::new();
+        let mut offline: Vec<(String, Id)> = Vec::new();
+        for member in self.state.members(&guild_id) {
+            let name = member.display_name().to_lowercase();
+            if self.state.presence(member.id()) == "offline" {
+                offline.push((name, member.id().to_string()));
+            } else {
+                let position = self
+                    .state
+                    .member_roles(&guild_id, member.id())
+                    .first()
+                    .map(|role| role.position)
+                    .unwrap_or(0);
+                online.push((position, name, member.user.id.clone()));
+            }
+        }
+        online.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+        offline.sort_by(|a, b| a.0.cmp(&b.0));
+
+        if !online.is_empty() {
+            self.member_rows.push(MemberRow::Header {
+                label: "ONLINE",
+                count: online.len(),
+            });
+            self.member_rows.extend(
+                online
+                    .into_iter()
+                    .map(|(_, _, user_id)| MemberRow::Member { user_id }),
+            );
+        }
+        if !offline.is_empty() {
+            self.member_rows.push(MemberRow::Header {
+                label: "OFFLINE",
+                count: offline.len(),
+            });
+            self.member_rows.extend(
+                offline
+                    .into_iter()
+                    .map(|(_, user_id)| MemberRow::Member { user_id }),
+            );
         }
     }
 
@@ -719,6 +834,10 @@ impl App {
             .child(self.render_sidebar(cx))
             .child(self.render_chat(cx));
 
+        if self.right_pane.is_some() {
+            root = root.child(self.render_right_pane(cx));
+        }
+
         if let Some(url) = self.image_viewer.clone() {
             root = root.child(
                 div()
@@ -802,4 +921,16 @@ fn debug_render() -> bool {
 
     static DEBUG: OnceLock<bool> = OnceLock::new();
     *DEBUG.get_or_init(|| std::env::var_os("RUSTCORD_DEBUG_RENDER").is_some())
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(super) enum RightPane {
+    Members,
+    Profile { user_id: Id, guild_id: Option<Id> },
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(super) enum MemberRow {
+    Header { label: &'static str, count: usize },
+    Member { user_id: Id },
 }

@@ -2,7 +2,10 @@ use std::{collections::HashMap, time::Instant};
 
 use crate::{
     events::Event,
-    models::{Channel, Guild, Id, Message, Reaction, ReadState, Relationship, User, snowflake},
+    models::{
+        Channel, Guild, Id, Member, Message, Reaction, ReadState, Relationship, Role, User,
+        snowflake,
+    },
 };
 
 const MAX_MESSAGES_PER_CHANNEL: usize = 200;
@@ -57,8 +60,37 @@ impl State {
                     }
                 }
             }
-            Event::GuildCreate(guild) | Event::GuildUpdate(guild) => {
+            Event::GuildCreate(guild) => {
+                let mut guild = (**guild).clone();
+                let resolved: Vec<Member> = guild
+                    .members
+                    .iter()
+                    .map(|member| self.resolve_member(member.clone()))
+                    .collect();
+                guild.members = resolved;
+                for member in &guild.members {
+                    self.remember_user(&member.user);
+                }
+                for presence in &guild.presences {
+                    self.apply_presence(presence);
+                }
+                self.upsert_guild(guild);
+            }
+            Event::GuildUpdate(guild) => {
                 self.upsert_guild((**guild).clone());
+            }
+            Event::MemberUpdate { guild_id, member } => {
+                self.upsert_member(guild_id, member.clone());
+            }
+            Event::MemberChunk { guild_id, members } => {
+                for member in members {
+                    self.upsert_member(guild_id, member.clone());
+                }
+            }
+            Event::MemberRemove { guild_id, user_id } => {
+                if let Some(guild) = self.guilds.iter_mut().find(|guild| &guild.id == guild_id) {
+                    guild.members.retain(|member| member.id() != user_id);
+                }
             }
             Event::GuildRemove { id, unavailable } => {
                 if !unavailable {
@@ -239,6 +271,35 @@ impl State {
         }
     }
 
+    fn resolve_member(&self, mut member: Member) -> Member {
+        if member.user.id.is_empty()
+            && let Some(id) = member.user_id.clone()
+        {
+            if let Some(user) = self.users.get(&id) {
+                member.user = user.clone();
+            } else {
+                member.user.id = id;
+            }
+        }
+        member
+    }
+
+    fn upsert_member(&mut self, guild_id: &str, member: Member) {
+        let member = self.resolve_member(member);
+        self.remember_user(&member.user);
+        if let Some(guild) = self.guilds.iter_mut().find(|guild| guild.id == guild_id) {
+            if let Some(existing) = guild
+                .members
+                .iter_mut()
+                .find(|existing| existing.id() == member.id())
+            {
+                *existing = member;
+            } else {
+                guild.members.push(member);
+            }
+        }
+    }
+
     fn remember_user(&mut self, user: &User) {
         if !user.id.is_empty() {
             self.users.insert(user.id.clone(), user.clone());
@@ -254,6 +315,59 @@ impl State {
             .iter()
             .flat_map(|guild| &guild.roles)
             .find(|role| role.id == id)
+    }
+
+    pub fn member(&self, guild_id: &str, user_id: &str) -> Option<&Member> {
+        self.guild(guild_id)?
+            .members
+            .iter()
+            .find(|member| member.id() == user_id)
+    }
+
+    pub fn members(&self, guild_id: &str) -> &[Member] {
+        self.guild(guild_id)
+            .map(|guild| guild.members.as_slice())
+            .unwrap_or_default()
+    }
+
+    pub fn member_display_name(&self, guild_id: &str, user: &User) -> String {
+        self.member(guild_id, &user.id)
+            .map(|member| member.display_name().to_string())
+            .unwrap_or_else(|| user.display_name().to_string())
+    }
+
+    pub fn member_name<'a>(&'a self, guild_id: &str, user_id: &str) -> Option<&'a str> {
+        self.member(guild_id, user_id)
+            .map(|member| member.display_name())
+    }
+
+    pub fn member_roles(&self, guild_id: &str, user_id: &str) -> Vec<&Role> {
+        let Some(guild) = self.guild(guild_id) else {
+            return Vec::new();
+        };
+        let Some(member) = guild.members.iter().find(|member| member.id() == user_id) else {
+            return Vec::new();
+        };
+        let mut roles: Vec<&Role> = member
+            .roles
+            .iter()
+            .filter_map(|id| guild.roles.iter().find(|role| &role.id == id))
+            .collect();
+        roles.sort_by_key(|role| std::cmp::Reverse(role.position));
+        roles
+    }
+
+    pub fn member_role_color(&self, guild_id: &str, user_id: &str) -> u32 {
+        self.member_roles(guild_id, user_id)
+            .first()
+            .map(|role| role.color)
+            .unwrap_or(0)
+    }
+
+    pub fn is_guild_owner(&self, guild_id: &str, user_id: &str) -> bool {
+        self.guild(guild_id)
+            .and_then(|guild| guild.owner_id.as_deref())
+            .is_some_and(|owner| owner == user_id)
     }
 
     pub fn channel_display_name(&self, channel: &Channel) -> String {
@@ -331,6 +445,9 @@ impl State {
             existing.name = guild.name;
             existing.icon = guild.icon;
             existing.roles = guild.roles;
+            if !guild.members.is_empty() {
+                existing.members = guild.members;
+            }
             existing.member_count = guild.member_count;
             existing.unavailable = guild.unavailable;
         } else {
@@ -420,7 +537,7 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{Emoji, Message};
+    use crate::models::{Emoji, Guild, Member, Message, Role, User};
 
     fn message(id: &str, channel: &str, content: &str) -> Message {
         Message {
@@ -449,6 +566,40 @@ mod tests {
         state.apply(&Event::MessageCreate(Box::new(message("10", "1", "old"))));
         state.apply(&Event::MessageUpdate(Box::new(message("10", "1", "new"))));
         assert_eq!(state.messages("1")[0].content, "new");
+    }
+
+    #[test]
+    fn members_and_role_colors() {
+        let mut state = State::default();
+        state.apply(&Event::GuildCreate(Box::new(Guild {
+            id: "1".to_string(),
+            name: "server".to_string(),
+            roles: vec![Role {
+                id: "role".to_string(),
+                name: "Red".to_string(),
+                color: 0xff0000,
+                position: 2,
+            }],
+            members: vec![Member {
+                user: User {
+                    id: "7".to_string(),
+                    username: "alice".to_string(),
+                    ..Default::default()
+                },
+                nick: Some("Ally".to_string()),
+                roles: vec!["role".to_string()],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })));
+        let user = User {
+            id: "7".to_string(),
+            username: "alice".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(state.member_display_name("1", &user), "Ally");
+        assert_eq!(state.member_role_color("1", "7"), 0xff0000);
+        assert_eq!(state.members("1").len(), 1);
     }
 
     #[test]

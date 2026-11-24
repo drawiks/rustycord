@@ -1,4 +1,6 @@
-use crate::models::{Channel, Emoji, Guild, Id, Message, Presence, Ready, Relationship, User};
+use crate::models::{
+    Channel, Emoji, Guild, Id, Member, Message, Presence, Ready, Relationship, User,
+};
 
 #[derive(Debug, Clone)]
 pub enum Event {
@@ -51,6 +53,18 @@ pub enum Event {
     PrivateChannels(Vec<Channel>),
     Users(Vec<User>),
     PresenceUpdate(Box<Presence>),
+    MemberUpdate {
+        guild_id: Id,
+        member: Member,
+    },
+    MemberRemove {
+        guild_id: Id,
+        user_id: Id,
+    },
+    MemberChunk {
+        guild_id: Id,
+        members: Vec<Member>,
+    },
     UserUpdate(Box<User>),
     Connection(ConnectionState),
 }

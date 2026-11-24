@@ -21,8 +21,8 @@ use crate::{
     events::{ConnectionState, Event},
     fingerprint::Fingerprint,
     models::{
-        Channel, Emoji, Guild, Message as DiscordMessage, Presence, Ready, ReadySupplemental,
-        Relationship, User,
+        Channel, Emoji, Guild, Member, Message as DiscordMessage, Presence, Ready,
+        ReadySupplemental, Relationship, User,
     },
 };
 
@@ -33,7 +33,27 @@ const MAX_FRAME: usize = 64 * 1024 * 1024;
 type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 pub struct GatewayHandle {
+    commands: mpsc::UnboundedSender<Value>,
     task: tokio::task::JoinHandle<()>,
+}
+
+impl GatewayHandle {
+    pub fn subscribe_members(&self, guild_id: &str, channel_id: &str) {
+        let mut channels = serde_json::Map::new();
+        channels.insert(channel_id.to_string(), json!([[0, 99]]));
+        let payload = json!({
+            "op": 14,
+            "d": {
+                "guild_id": guild_id,
+                "typing": true,
+                "activities": true,
+                "threads": true,
+                "channels": channels,
+                "thread_member_lists": []
+            }
+        });
+        let _ = self.commands.send(payload);
+    }
 }
 
 impl Drop for GatewayHandle {
@@ -43,8 +63,10 @@ impl Drop for GatewayHandle {
 }
 
 pub fn spawn(token: String, fp: Arc<Fingerprint>, events: mpsc::Sender<Event>) -> GatewayHandle {
+    let (commands, command_rx) = mpsc::unbounded_channel();
     GatewayHandle {
-        task: tokio::spawn(run(token, fp, events)),
+        commands,
+        task: tokio::spawn(run(token, fp, events, command_rx)),
     }
 }
 
@@ -60,13 +82,19 @@ enum Action {
     Fatal(String),
 }
 
-async fn run(token: String, fp: Arc<Fingerprint>, tx: mpsc::Sender<Event>) {
+async fn run(
+    token: String,
+    fp: Arc<Fingerprint>,
+    tx: mpsc::Sender<Event>,
+    mut commands: mpsc::UnboundedReceiver<Value>,
+) {
     let mut session: Option<Session> = None;
     let mut attempt = 0u32;
     let mut backoff = Duration::from_millis(500);
 
     loop {
-        let (established, action) = connect_once(&token, &fp, &tx, &mut session).await;
+        let (established, action) =
+            connect_once(&token, &fp, &tx, &mut session, &mut commands).await;
         if established {
             attempt = 0;
             backoff = Duration::from_millis(500);
@@ -98,6 +126,7 @@ async fn connect_once(
     fp: &Fingerprint,
     tx: &mpsc::Sender<Event>,
     session: &mut Option<Session>,
+    commands: &mut mpsc::UnboundedReceiver<Value>,
 ) -> (bool, Action) {
     let url = match session {
         Some(s) => resume_url(&s.url),
@@ -116,7 +145,7 @@ async fn connect_once(
         }
     };
 
-    run_session(ws, token, fp, tx, session).await
+    run_session(ws, token, fp, tx, session, commands).await
 }
 
 fn resume_url(base: &str) -> String {
@@ -135,6 +164,7 @@ async fn run_session(
     fp: &Fingerprint,
     tx: &mpsc::Sender<Event>,
     session: &mut Option<Session>,
+    commands: &mut mpsc::UnboundedReceiver<Value>,
 ) -> (bool, Action) {
     let (mut write, mut read) = ws.split();
     let mut zlib = Zlib::new();
@@ -199,6 +229,10 @@ async fn run_session(
                             "READY" => {
                                 if let Some(ready) = parse::<Ready>("READY", &value["d"]) {
                                     let ids: Vec<String> = ready.guilds.iter().map(|g| g.id.clone()).collect();
+                                    let member_lens: Vec<usize> =
+                                        ready.merged_members.iter().map(Vec::len).collect();
+                                    let guild_member_lens: Vec<usize> =
+                                        ready.guilds.iter().map(|g| g.members.len()).collect();
                                     *session = Some(Session {
                                         id: ready.session_id.clone(),
                                         url: ready.resume_gateway_url.clone(),
@@ -211,7 +245,12 @@ async fn run_session(
                                     if !ids.is_empty() && !send_json(&mut write, subscribe_payload(&ids)).await {
                                         return (established, Action::Resume);
                                     }
-                                    info!("gateway ready, {} guilds", ids.len());
+                                    info!(
+                                        "gateway ready, {} guilds, merged_members={:?}, guild_members={:?}",
+                                        ids.len(),
+                                        member_lens,
+                                        guild_member_lens
+                                    );
                                 }
                             }
                             "RESUMED" => {
@@ -238,6 +277,13 @@ async fn run_session(
                                 if let Some(supplemental) =
                                     parse::<ReadySupplemental>("READY_SUPPLEMENTAL", &value["d"])
                                 {
+                                    debug!(
+                                        "READY_SUPPLEMENTAL: guilds={:?} member_groups={:?} lazy_channels={} users={}",
+                                        supplemental.guilds.iter().map(|g| g.id.clone()).collect::<Vec<_>>(),
+                                        supplemental.merged_members.iter().map(Vec::len).collect::<Vec<_>>(),
+                                        supplemental.lazy_private_channels.len(),
+                                        supplemental.users.len()
+                                    );
                                     if !supplemental.users.is_empty() {
                                         let _ = tx.send(Event::Users(supplemental.users)).await;
                                     }
@@ -247,6 +293,20 @@ async fn run_session(
                                                 supplemental.lazy_private_channels,
                                             ))
                                             .await;
+                                    }
+                                    for (guild, members) in supplemental
+                                        .guilds
+                                        .iter()
+                                        .zip(supplemental.merged_members.iter())
+                                    {
+                                        if !members.is_empty() {
+                                            let _ = tx
+                                                .send(Event::MemberChunk {
+                                                    guild_id: guild.id.clone(),
+                                                    members: members.clone(),
+                                                })
+                                                .await;
+                                        }
                                     }
                                 }
                             }
@@ -271,6 +331,11 @@ async fn run_session(
                     11 => awaiting_ack = false,
                     10 => {}
                     other => debug!("unhandled gateway op {other}"),
+                }
+            }
+            Some(payload) = commands.recv() => {
+                if !send_json(&mut write, payload).await {
+                    return (established, Action::Resume);
                 }
             }
             _ = heartbeat.tick() => {
@@ -401,12 +466,61 @@ async fn dispatch(name: &str, data: &Value, tx: &mpsc::Sender<Event>) {
         "PRESENCE_UPDATE" => {
             parse::<Presence>(name, data).map(|p| Event::PresenceUpdate(Box::new(p)))
         }
+        "GUILD_MEMBER_ADD" | "GUILD_MEMBER_UPDATE" => member_event(data),
+        "GUILD_MEMBER_LIST_UPDATE" => member_list_event(data),
+        "GUILD_MEMBERS_CHUNK" => match data["guild_id"].as_str() {
+            Some(guild_id) => serde_json::from_value::<Vec<Member>>(data["members"].clone())
+                .ok()
+                .map(|members| Event::MemberChunk {
+                    guild_id: guild_id.to_string(),
+                    members,
+                }),
+            None => None,
+        },
+        "GUILD_MEMBER_REMOVE" => match (data["guild_id"].as_str(), data["user"]["id"].as_str()) {
+            (Some(guild_id), Some(user_id)) => Some(Event::MemberRemove {
+                guild_id: guild_id.to_string(),
+                user_id: user_id.to_string(),
+            }),
+            _ => None,
+        },
         _ => None,
     };
 
     if let Some(event) = event {
         let _ = tx.send(event).await;
     }
+}
+
+fn member_list_event(data: &Value) -> Option<Event> {
+    let guild_id = data["guild_id"].as_str()?.to_string();
+    let mut members = Vec::new();
+    for op in data["ops"].as_array()? {
+        if !matches!(
+            op["op"].as_str(),
+            Some("SYNC") | Some("INSERT") | Some("UPDATE")
+        ) {
+            continue;
+        }
+        for item in op["items"].as_array().into_iter().flatten() {
+            if let Ok(member) = serde_json::from_value::<Member>(item["member"].clone())
+                && !member.id().is_empty()
+            {
+                members.push(member);
+            }
+        }
+    }
+    if members.is_empty() {
+        None
+    } else {
+        Some(Event::MemberChunk { guild_id, members })
+    }
+}
+
+fn member_event(data: &Value) -> Option<Event> {
+    let guild_id = data["guild_id"].as_str()?.to_string();
+    let member = serde_json::from_value::<Member>(data.clone()).ok()?;
+    Some(Event::MemberUpdate { guild_id, member })
 }
 
 fn reaction_event(data: &Value, add: bool) -> Option<Event> {

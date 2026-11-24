@@ -39,7 +39,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     state.users.len()
                 );
                 for guild in &state.guilds {
-                    println!("guild: {} ({} channels)", guild.name, guild.channels.len());
+                    println!(
+                        "guild: {} ({} channels, {} members reported)",
+                        guild.name,
+                        guild.channels.len(),
+                        guild.member_count
+                    );
+                    for member in &guild.members {
+                        println!(
+                            "  member {} ({}) roles={:?}",
+                            member.display_name(),
+                            member.user.id,
+                            member.roles
+                        );
+                    }
                     for channel in &guild.channels {
                         println!(
                             "  {:?} type={} parent={:?} pos={}",
@@ -52,6 +65,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
             Event::GuildCreate(guild) => println!("guild: {}", guild.name),
+            Event::MemberChunk { guild_id, members } => {
+                for member in members {
+                    println!(
+                        "member: {} ({}) roles={:?}",
+                        member.display_name(),
+                        member.user.id,
+                        member.roles
+                    );
+                }
+                println!("members chunk: guild {guild_id}");
+            }
             Event::MessageCreate(message) => {
                 let channel = state
                     .channel(&message.channel_id)
