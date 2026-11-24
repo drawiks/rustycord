@@ -10,6 +10,7 @@ const MAX_MESSAGES_PER_CHANNEL: usize = 200;
 #[derive(Default)]
 pub struct State {
     pub me: Option<User>,
+    pub users: HashMap<Id, User>,
     pub guilds: Vec<Guild>,
     pub channels: Vec<Channel>,
     pub relationships: Vec<Relationship>,
@@ -23,6 +24,7 @@ impl State {
         match event {
             Event::Ready(ready) => {
                 self.me = Some(ready.user.clone());
+                self.users.insert(ready.user.id.clone(), ready.user.clone());
                 self.guilds = ready.guilds.clone();
                 self.channels = ready.private_channels.clone();
                 self.messages.clear();
@@ -48,9 +50,11 @@ impl State {
                 self.remove_channel(channel);
             }
             Event::MessageCreate(message) => {
+                self.remember_user(&message.author);
                 self.insert_message((**message).clone());
             }
             Event::MessageUpdate(update) => {
+                self.remember_user(&update.author);
                 self.merge_message(update);
             }
             Event::MessageDelete { id, channel_id } => {
@@ -66,6 +70,7 @@ impl State {
                     .insert(channel_id.clone(), (user_id.clone(), Instant::now()));
             }
             Event::RelationshipAdd(relationship) => {
+                self.remember_user(&relationship.user);
                 if let Some(existing) = self
                     .relationships
                     .iter_mut()
@@ -80,11 +85,22 @@ impl State {
                 self.relationships.retain(|r| &r.id != id);
             }
             Event::UserUpdate(user) => {
+                self.remember_user(user);
                 if self.me.as_ref().is_some_and(|me| me.id == user.id) {
                     self.me = Some((**user).clone());
                 }
             }
             Event::Connection(_) => {}
+        }
+    }
+
+    pub fn user(&self, id: &str) -> Option<&User> {
+        self.users.get(id)
+    }
+
+    fn remember_user(&mut self, user: &User) {
+        if !user.id.is_empty() {
+            self.users.insert(user.id.clone(), user.clone());
         }
     }
 
