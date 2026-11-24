@@ -21,7 +21,8 @@ use crate::{
     events::{ConnectionState, Event},
     fingerprint::Fingerprint,
     models::{
-        Channel, Guild, Message as DiscordMessage, Ready, ReadySupplemental, Relationship, User,
+        Channel, Emoji, Guild, Message as DiscordMessage, Ready, ReadySupplemental, Relationship,
+        User,
     },
 };
 
@@ -345,6 +346,29 @@ async fn dispatch(name: &str, data: &Value, tx: &mpsc::Sender<Event>) {
         "MESSAGE_UPDATE" => {
             parse::<DiscordMessage>(name, data).map(|m| Event::MessageUpdate(Box::new(m)))
         }
+        "MESSAGE_REACTION_ADD" => reaction_event(data, true),
+        "MESSAGE_REACTION_REMOVE" => reaction_event(data, false),
+        "MESSAGE_REACTION_REMOVE_ALL" => {
+            match (data["message_id"].as_str(), data["channel_id"].as_str()) {
+                (Some(message_id), Some(channel_id)) => Some(Event::ReactionRemoveAll {
+                    message_id: message_id.to_string(),
+                    channel_id: channel_id.to_string(),
+                }),
+                _ => None,
+            }
+        }
+        "MESSAGE_REACTION_REMOVE_EMOJI" => match (
+            data["message_id"].as_str(),
+            data["channel_id"].as_str(),
+            serde_json::from_value::<Emoji>(data["emoji"].clone()).ok(),
+        ) {
+            (Some(message_id), Some(channel_id), Some(emoji)) => Some(Event::ReactionRemoveEmoji {
+                message_id: message_id.to_string(),
+                channel_id: channel_id.to_string(),
+                emoji,
+            }),
+            _ => None,
+        },
         "MESSAGE_DELETE" => match (data["id"].as_str(), data["channel_id"].as_str()) {
             (Some(id), Some(channel_id)) => Some(Event::MessageDelete {
                 id: id.to_string(),
@@ -380,6 +404,28 @@ async fn dispatch(name: &str, data: &Value, tx: &mpsc::Sender<Event>) {
     if let Some(event) = event {
         let _ = tx.send(event).await;
     }
+}
+
+fn reaction_event(data: &Value, add: bool) -> Option<Event> {
+    let message_id = data["message_id"].as_str()?.to_string();
+    let channel_id = data["channel_id"].as_str()?.to_string();
+    let user_id = data["user_id"].as_str()?.to_string();
+    let emoji = serde_json::from_value::<Emoji>(data["emoji"].clone()).ok()?;
+    Some(if add {
+        Event::ReactionAdd {
+            message_id,
+            channel_id,
+            user_id,
+            emoji,
+        }
+    } else {
+        Event::ReactionRemove {
+            message_id,
+            channel_id,
+            user_id,
+            emoji,
+        }
+    })
 }
 
 fn parse<T: DeserializeOwned>(name: &str, value: &Value) -> Option<T> {

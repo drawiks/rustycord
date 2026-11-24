@@ -2,7 +2,9 @@ use std::{collections::HashMap, time::Instant};
 
 use crate::{
     events::Event,
-    models::{Channel, Guild, Id, Message, ReadState, Relationship, User, snowflake},
+    models::{
+        Channel, Emoji, Guild, Id, Message, Reaction, ReadState, Relationship, User, snowflake,
+    },
 };
 
 const MAX_MESSAGES_PER_CHANNEL: usize = 200;
@@ -63,6 +65,77 @@ impl State {
             Event::MessageDelete { id, channel_id } => {
                 if let Some(list) = self.messages.get_mut(channel_id) {
                     list.retain(|m| &m.id != id);
+                }
+            }
+            Event::ReactionAdd {
+                message_id,
+                channel_id,
+                user_id,
+                emoji,
+            } => {
+                let mine = self.me.as_ref().is_some_and(|me| &me.id == user_id);
+                let key = emoji.text();
+                if let Some(message) = self.message_mut(channel_id, message_id) {
+                    if let Some(reaction) = message
+                        .reactions
+                        .iter_mut()
+                        .find(|reaction| reaction.emoji.text() == key)
+                    {
+                        reaction.count += 1;
+                        if mine {
+                            reaction.me = true;
+                        }
+                    } else {
+                        message.reactions.push(Reaction {
+                            count: 1,
+                            me: mine,
+                            emoji: emoji.clone(),
+                        });
+                    }
+                }
+            }
+            Event::ReactionRemove {
+                message_id,
+                channel_id,
+                user_id,
+                emoji,
+            } => {
+                let mine = self.me.as_ref().is_some_and(|me| &me.id == user_id);
+                let key = emoji.text();
+                if let Some(message) = self.message_mut(channel_id, message_id)
+                    && let Some(index) = message
+                        .reactions
+                        .iter()
+                        .position(|reaction| reaction.emoji.text() == key)
+                {
+                    let reaction = &mut message.reactions[index];
+                    reaction.count = reaction.count.saturating_sub(1);
+                    if mine {
+                        reaction.me = false;
+                    }
+                    if reaction.count == 0 {
+                        message.reactions.remove(index);
+                    }
+                }
+            }
+            Event::ReactionRemoveAll {
+                message_id,
+                channel_id,
+            } => {
+                if let Some(message) = self.message_mut(channel_id, message_id) {
+                    message.reactions.clear();
+                }
+            }
+            Event::ReactionRemoveEmoji {
+                message_id,
+                channel_id,
+                emoji,
+            } => {
+                let key = emoji.text();
+                if let Some(message) = self.message_mut(channel_id, message_id) {
+                    message
+                        .reactions
+                        .retain(|reaction| reaction.emoji.text() != key);
                 }
             }
             Event::TypingStart {
@@ -230,6 +303,13 @@ impl State {
         self.channels.retain(|c| c.id != channel.id);
     }
 
+    fn message_mut(&mut self, channel_id: &str, message_id: &str) -> Option<&mut Message> {
+        self.messages
+            .get_mut(channel_id)?
+            .iter_mut()
+            .find(|message| message.id == message_id)
+    }
+
     fn insert_message(&mut self, message: Message) {
         let list = self.messages.entry(message.channel_id.clone()).or_default();
         if list.iter().any(|m| m.id == message.id) {
@@ -299,6 +379,77 @@ mod tests {
         state.apply(&Event::MessageCreate(Box::new(message("10", "1", "old"))));
         state.apply(&Event::MessageUpdate(Box::new(message("10", "1", "new"))));
         assert_eq!(state.messages("1")[0].content, "new");
+    }
+
+    #[test]
+    fn reactions_add_and_remove() {
+        let mut state = State::default();
+        state.apply(&Event::MessageCreate(Box::new(message("10", "1", "hi"))));
+        let emoji = Emoji {
+            id: None,
+            name: Some("👍".to_string()),
+        };
+        state.apply(&Event::ReactionAdd {
+            message_id: "10".to_string(),
+            channel_id: "1".to_string(),
+            user_id: "7".to_string(),
+            emoji: emoji.clone(),
+        });
+        state.apply(&Event::ReactionAdd {
+            message_id: "10".to_string(),
+            channel_id: "1".to_string(),
+            user_id: "8".to_string(),
+            emoji: emoji.clone(),
+        });
+        assert_eq!(state.messages("1")[0].reactions[0].count, 2);
+
+        state.apply(&Event::ReactionRemove {
+            message_id: "10".to_string(),
+            channel_id: "1".to_string(),
+            user_id: "7".to_string(),
+            emoji: emoji.clone(),
+        });
+        assert_eq!(state.messages("1")[0].reactions[0].count, 1);
+
+        state.apply(&Event::ReactionRemove {
+            message_id: "10".to_string(),
+            channel_id: "1".to_string(),
+            user_id: "8".to_string(),
+            emoji,
+        });
+        assert!(state.messages("1")[0].reactions.is_empty());
+    }
+
+    #[test]
+    fn reaction_remove_all_and_emoji() {
+        let mut state = State::default();
+        state.apply(&Event::MessageCreate(Box::new(message("10", "1", "hi"))));
+        for name in ["a", "b"] {
+            state.apply(&Event::ReactionAdd {
+                message_id: "10".to_string(),
+                channel_id: "1".to_string(),
+                user_id: "7".to_string(),
+                emoji: Emoji {
+                    id: None,
+                    name: Some(name.to_string()),
+                },
+            });
+        }
+        state.apply(&Event::ReactionRemoveEmoji {
+            message_id: "10".to_string(),
+            channel_id: "1".to_string(),
+            emoji: Emoji {
+                id: None,
+                name: Some("a".to_string()),
+            },
+        });
+        assert_eq!(state.messages("1")[0].reactions.len(), 1);
+
+        state.apply(&Event::ReactionRemoveAll {
+            message_id: "10".to_string(),
+            channel_id: "1".to_string(),
+        });
+        assert!(state.messages("1")[0].reactions.is_empty());
     }
 
     #[test]

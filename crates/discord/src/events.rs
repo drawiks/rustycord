@@ -1,20 +1,52 @@
-use crate::models::{Channel, Guild, Id, Message, Ready, Relationship, User};
+use crate::models::{Channel, Emoji, Guild, Id, Message, Ready, Relationship, User};
 
 #[derive(Debug, Clone)]
 pub enum Event {
     Ready(Box<Ready>),
     GuildCreate(Box<Guild>),
     GuildUpdate(Box<Guild>),
-    GuildRemove { id: Id, unavailable: bool },
+    GuildRemove {
+        id: Id,
+        unavailable: bool,
+    },
     ChannelCreate(Box<Channel>),
     ChannelUpdate(Box<Channel>),
     ChannelDelete(Box<Channel>),
     MessageCreate(Box<Message>),
     MessageUpdate(Box<Message>),
-    MessageDelete { id: Id, channel_id: Id },
-    TypingStart { channel_id: Id, user_id: Id },
+    MessageDelete {
+        id: Id,
+        channel_id: Id,
+    },
+    ReactionAdd {
+        message_id: Id,
+        channel_id: Id,
+        user_id: Id,
+        emoji: Emoji,
+    },
+    ReactionRemove {
+        message_id: Id,
+        channel_id: Id,
+        user_id: Id,
+        emoji: Emoji,
+    },
+    ReactionRemoveAll {
+        message_id: Id,
+        channel_id: Id,
+    },
+    ReactionRemoveEmoji {
+        message_id: Id,
+        channel_id: Id,
+        emoji: Emoji,
+    },
+    TypingStart {
+        channel_id: Id,
+        user_id: Id,
+    },
     RelationshipAdd(Box<Relationship>),
-    RelationshipRemove { id: Id },
+    RelationshipRemove {
+        id: Id,
+    },
     Relationships(Vec<Relationship>),
     PrivateChannels(Vec<Channel>),
     Users(Vec<User>),
