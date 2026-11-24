@@ -3,7 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use chrono::DateTime;
+use chrono::{DateTime, Local, NaiveDate};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::{
@@ -277,10 +277,17 @@ impl App {
         if let Some(net) = &self.net {
             net.send(Command::Ack {
                 channel_id: channel_id.to_string(),
-                message_id,
+                message_id: message_id.clone(),
                 token,
             });
             self.last_ack = Some(Instant::now());
+            let read = self
+                .state
+                .read_states
+                .entry(channel_id.to_string())
+                .or_default();
+            read.id = channel_id.to_string();
+            read.last_message_id = Some(message_id);
         }
     }
 
@@ -836,13 +843,13 @@ impl App {
 
         let mut list = div()
             .id("messages")
-            .flex_1()
+            .h_full()
             .overflow_y_scroll()
             .track_scroll(&self.scroll)
             .flex()
             .flex_col()
-            .gap(px(10.))
-            .px(px(16.))
+            .gap(px(2.))
+            .px(px(10.))
             .py(px(16.));
 
         if self.state.messages(&channel_id).len() >= 50 {
@@ -869,8 +876,75 @@ impl App {
                     .child("No messages loaded"),
             );
         }
+        let read_marker = self
+            .state
+            .read_states
+            .get(&channel_id)
+            .and_then(|state| state.last_message_id.clone());
+        let mut previous: Option<(Id, DateTime<Local>)> = None;
+        let mut last_date: Option<NaiveDate> = None;
+        let mut unread_shown = false;
+        let mut first = true;
+
         for (message, reactions) in messages {
-            list = list.child(self.render_message(message, reactions, cx));
+            let timestamp = parse_timestamp(&message.timestamp);
+            let date = timestamp.map(|time| time.date_naive());
+            if let Some(date) = date
+                && last_date != Some(date)
+            {
+                list = list.child(divider(&day_label(date), FAINT));
+                last_date = Some(date);
+            }
+            if !unread_shown
+                && !first
+                && let Some(marker) = &read_marker
+                && snowflake(&message.id) > snowflake(marker)
+            {
+                list = list.child(divider("NEW", DANGER));
+                unread_shown = true;
+            }
+            let compact = match (&previous, timestamp) {
+                (Some((author, at)), Some(now)) => {
+                    author == &message.author.id
+                        && now.signed_duration_since(*at) < chrono::Duration::minutes(5)
+                }
+                _ => false,
+            };
+            previous = timestamp.map(|time| (message.author.id.clone(), time));
+            first = false;
+            list = list.child(self.render_message(message, reactions, compact, cx));
+        }
+
+        let mut list_container = div()
+            .relative()
+            .flex_1()
+            .min_h(px(0.))
+            .flex()
+            .flex_col()
+            .child(list);
+        if !self.at_bottom() {
+            list_container = list_container.child(
+                div()
+                    .id("jump-bottom")
+                    .absolute()
+                    .bottom(px(14.))
+                    .right(px(24.))
+                    .size(px(36.))
+                    .rounded(px(18.))
+                    .bg(rgb(SIDEBAR))
+                    .border_1()
+                    .border_color(rgb(RAIL))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .hover(|style| style.bg(rgb(HOVER)))
+                    .child(gpui_kit::component::Icon::new(IconName::ChevronDown).size(px(18.)))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.scroll.scroll_to_bottom();
+                        cx.notify();
+                    })),
+            );
         }
 
         let header = self.render_top_bar(Some(format!("#{channel_name}")));
@@ -950,7 +1024,7 @@ impl App {
             .flex_col()
             .bg(rgb(CHAT))
             .child(header)
-            .child(list)
+            .child(list_container)
             .child(
                 div()
                     .px(px(16.))
@@ -967,6 +1041,7 @@ impl App {
         &self,
         message: Message,
         reactions: Vec<rustycord_discord::Reaction>,
+        compact: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let author = message.author.display_name().to_string();
@@ -1232,9 +1307,33 @@ impl App {
                 .child(if edited {
                     format!("{time} (edited)")
                 } else {
-                    time
+                    time.clone()
                 }),
         );
+
+        let leading = if compact {
+            let gutter_time = time.clone();
+            div()
+                .id(gpui_kit::SharedString::from(format!("time-{}", message.id)))
+                .w(px(40.))
+                .flex_none()
+                .flex()
+                .justify_end()
+                .text_size(px(10.))
+                .text_color(rgb(FAINT))
+                .opacity(0.)
+                .group_hover("message-row", |style| style.opacity(1.))
+                .child(gutter_time)
+                .into_any_element()
+        } else {
+            avatar(&message.author).into_any_element()
+        };
+
+        let mut column = div().flex().flex_col().flex_1().min_w(px(0.));
+        if !compact {
+            column = column.child(header);
+        }
+        column = column.child(content);
 
         div()
             .group("message-row")
@@ -1246,16 +1345,8 @@ impl App {
             .rounded(px(4.))
             .hover(|style| style.bg(rgb(0x2e3035)))
             .child(actions)
-            .child(avatar(&message.author))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_w(px(0.))
-                    .child(header)
-                    .child(content),
-            )
+            .child(leading)
+            .child(column)
     }
 }
 
@@ -1336,6 +1427,40 @@ fn is_image(content_type: &Option<String>, filename: &str) -> bool {
         extension.to_ascii_lowercase().as_str(),
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "avif" | "bmp"
     )
+}
+
+fn divider(label: &str, color: u32) -> impl IntoElement {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(8.))
+        .py(px(6.))
+        .child(div().flex_1().h(px(1.)).bg(rgb(RAIL)))
+        .child(
+            div()
+                .text_size(px(11.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(rgb(color))
+                .child(label.to_string()),
+        )
+        .child(div().flex_1().h(px(1.)).bg(rgb(RAIL)))
+}
+
+fn parse_timestamp(value: &str) -> Option<DateTime<Local>> {
+    DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|time| time.with_timezone(&Local))
+}
+
+fn day_label(date: NaiveDate) -> String {
+    let today = Local::now().date_naive();
+    if date == today {
+        "Today".to_string()
+    } else if Some(date) == today.pred_opt() {
+        "Yesterday".to_string()
+    } else {
+        date.format("%d %B %Y").to_string()
+    }
 }
 
 fn snippet(text: &str, limit: usize) -> String {
