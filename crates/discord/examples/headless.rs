@@ -31,11 +31,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
         state.apply(&event);
 
         match &event {
-            Event::Ready(_) => println!(
-                "ready: {} guilds, {} private channels",
-                state.guilds.len(),
-                state.channels.len()
-            ),
+            Event::Ready(_) => {
+                println!(
+                    "ready: {} guilds, {} private channels, {} users cached",
+                    state.guilds.len(),
+                    state.channels.len(),
+                    state.users.len()
+                );
+                for guild in &state.guilds {
+                    println!("guild: {}", guild.name);
+                }
+                for channel in &state.channels {
+                    println!("dm: {}", state.channel_display_name(channel));
+                }
+            }
             Event::GuildCreate(guild) => println!("guild: {}", guild.name),
             Event::MessageCreate(message) => {
                 let channel = state

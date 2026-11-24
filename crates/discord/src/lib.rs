@@ -17,6 +17,15 @@ pub use gateway::GatewayHandle;
 pub use models::*;
 pub use state::State;
 
+fn install_crypto_provider() {
+    use std::sync::Once;
+
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
+
 #[derive(Clone)]
 pub struct Discord {
     http: rest::Http,
@@ -25,6 +34,7 @@ pub struct Discord {
 
 impl Discord {
     pub async fn login(token: impl Into<String>) -> Result<(Self, User)> {
+        install_crypto_provider();
         let fingerprint = Arc::new(fingerprint::Fingerprint::fetch().await);
         let http = rest::Http::new(token.into(), fingerprint.clone())?;
         let me = http.me().await?;

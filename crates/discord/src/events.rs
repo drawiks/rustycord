@@ -15,6 +15,9 @@ pub enum Event {
     TypingStart { channel_id: Id, user_id: Id },
     RelationshipAdd(Box<Relationship>),
     RelationshipRemove { id: Id },
+    Relationships(Vec<Relationship>),
+    PrivateChannels(Vec<Channel>),
+    Users(Vec<User>),
     UserUpdate(Box<User>),
     Connection(ConnectionState),
 }

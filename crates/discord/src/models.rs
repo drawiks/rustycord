@@ -6,6 +6,30 @@ pub fn snowflake(id: &str) -> u64 {
     id.parse().unwrap_or(0)
 }
 
+fn string_or_number<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(match serde_json::Value::deserialize(deserializer)? {
+        serde_json::Value::String(text) => text,
+        serde_json::Value::Number(number) => number.to_string(),
+        _ => String::new(),
+    })
+}
+
+fn opt_string_or_number<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(
+        match Option::<serde_json::Value>::deserialize(deserializer)? {
+            Some(serde_json::Value::String(text)) => Some(text),
+            Some(serde_json::Value::Number(number)) => Some(number.to_string()),
+            _ => None,
+        },
+    )
+}
+
 fn null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
 where
     D: Deserializer<'de>,
@@ -22,7 +46,7 @@ pub struct User {
     pub username: String,
     #[serde(default)]
     pub global_name: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "string_or_number")]
     pub discriminator: String,
     #[serde(default)]
     pub avatar: Option<String>,
@@ -79,10 +103,14 @@ pub struct Channel {
     pub position: i32,
     #[serde(default)]
     pub parent_id: Option<Id>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "opt_string_or_number")]
     pub last_message_id: Option<Id>,
     #[serde(default)]
+    pub icon: Option<String>,
+    #[serde(default)]
     pub recipients: Vec<User>,
+    #[serde(default)]
+    pub recipient_ids: Vec<Id>,
 }
 
 impl Channel {
@@ -260,7 +288,7 @@ pub struct Relationship {
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ReadState {
     pub id: Id,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "opt_string_or_number")]
     pub last_message_id: Option<Id>,
     #[serde(default)]
     pub mention_count: u32,
@@ -285,8 +313,18 @@ pub struct Ready {
     pub guilds: Vec<Guild>,
     #[serde(default)]
     pub private_channels: Vec<Channel>,
+    #[serde(default, deserialize_with = "null_default")]
+    pub users: Vec<User>,
     #[serde(default)]
     pub read_state: Option<ReadStateContainer>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ReadySupplemental {
+    #[serde(default, deserialize_with = "null_default")]
+    pub lazy_private_channels: Vec<Channel>,
+    #[serde(default, deserialize_with = "null_default")]
+    pub users: Vec<User>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -294,4 +332,23 @@ pub struct TypingStart {
     pub channel_id: Id,
     #[serde(default)]
     pub user_id: Option<Id>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_user_with_numeric_and_string_discriminator() {
+        let numeric: User =
+            serde_json::from_str(r#"{"id":"1","username":"a","discriminator":0}"#).unwrap();
+        assert_eq!(numeric.discriminator, "0");
+
+        let text: User =
+            serde_json::from_str(r#"{"id":"1","username":"a","discriminator":"1234"}"#).unwrap();
+        assert_eq!(text.discriminator, "1234");
+
+        let missing: User = serde_json::from_str(r#"{"id":"1","username":"a"}"#).unwrap();
+        assert_eq!(missing.discriminator, "");
+    }
 }

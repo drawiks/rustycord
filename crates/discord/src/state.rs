@@ -24,7 +24,10 @@ impl State {
         match event {
             Event::Ready(ready) => {
                 self.me = Some(ready.user.clone());
-                self.users.insert(ready.user.id.clone(), ready.user.clone());
+                for user in &ready.users {
+                    self.remember_user(user);
+                }
+                self.remember_user(&ready.user);
                 self.guilds = ready.guilds.clone();
                 self.channels = ready.private_channels.clone();
                 self.messages.clear();
@@ -84,6 +87,25 @@ impl State {
             Event::RelationshipRemove { id } => {
                 self.relationships.retain(|r| &r.id != id);
             }
+            Event::Relationships(relationships) => {
+                for relationship in relationships {
+                    self.remember_user(&relationship.user);
+                }
+                self.relationships = relationships.clone();
+            }
+            Event::PrivateChannels(channels) => {
+                for channel in channels {
+                    for user in &channel.recipients {
+                        self.remember_user(user);
+                    }
+                    self.upsert_channel(channel.clone());
+                }
+            }
+            Event::Users(users) => {
+                for user in users {
+                    self.remember_user(user);
+                }
+            }
             Event::UserUpdate(user) => {
                 self.remember_user(user);
                 if self.me.as_ref().is_some_and(|me| me.id == user.id) {
@@ -106,6 +128,33 @@ impl State {
 
     pub fn guild(&self, id: &str) -> Option<&Guild> {
         self.guilds.iter().find(|g| g.id == id)
+    }
+
+    pub fn channel_display_name(&self, channel: &Channel) -> String {
+        if let Some(name) = &channel.name {
+            return name.clone();
+        }
+        let mut names: Vec<String> = channel
+            .recipient_ids
+            .iter()
+            .map(|id| {
+                self.users
+                    .get(id)
+                    .map(|user| user.display_name().to_string())
+                    .unwrap_or_else(|| id.clone())
+            })
+            .collect();
+        names.extend(
+            channel
+                .recipients
+                .iter()
+                .map(|user| user.display_name().to_string()),
+        );
+        if names.is_empty() {
+            channel.id.clone()
+        } else {
+            names.join(", ")
+        }
     }
 
     pub fn channel(&self, id: &str) -> Option<&Channel> {

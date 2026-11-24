@@ -20,7 +20,9 @@ use tracing::{debug, info, warn};
 use crate::{
     events::{ConnectionState, Event},
     fingerprint::Fingerprint,
-    models::{Channel, Guild, Message as DiscordMessage, Ready, Relationship, User},
+    models::{
+        Channel, Guild, Message as DiscordMessage, Ready, ReadySupplemental, Relationship, User,
+    },
 };
 
 const GATEWAY_URL: &str = "wss://gateway.discord.gg/?v=9&encoding=json&compress=zlib-stream";
@@ -138,6 +140,7 @@ async fn run_session(
     let mut last_seq = session.as_ref().and_then(|s| s.seq);
     let mut established = false;
     let mut subscribed: HashSet<String> = HashSet::new();
+    let mut logged_events: HashSet<String> = HashSet::new();
 
     let hello =
         match time::timeout(Duration::from_secs(15), next_payload(&mut read, &mut zlib)).await {
@@ -192,8 +195,8 @@ async fn run_session(
                         }
                         let name = value["t"].as_str().unwrap_or_default();
                         match name {
-                            "READY" => match serde_json::from_value::<Ready>(value["d"].clone()) {
-                                Ok(ready) => {
+                            "READY" => {
+                                if let Some(ready) = parse::<Ready>("READY", &value["d"]) {
                                     let ids: Vec<String> = ready.guilds.iter().map(|g| g.id.clone()).collect();
                                     *session = Some(Session {
                                         id: ready.session_id.clone(),
@@ -209,8 +212,7 @@ async fn run_session(
                                     }
                                     info!("gateway ready, {} guilds", ids.len());
                                 }
-                                Err(e) => warn!("READY parse failed: {e}"),
-                            },
+                            }
                             "RESUMED" => {
                                 established = true;
                                 let _ = tx.send(Event::Connection(ConnectionState::Resumed)).await;
@@ -231,7 +233,28 @@ async fn run_session(
                                     let _ = tx.send(Event::GuildCreate(Box::new(guild))).await;
                                 }
                             }
-                            _ => dispatch(name, &value["d"], tx).await,
+                            "READY_SUPPLEMENTAL" => {
+                                if let Some(supplemental) =
+                                    parse::<ReadySupplemental>("READY_SUPPLEMENTAL", &value["d"])
+                                {
+                                    if !supplemental.users.is_empty() {
+                                        let _ = tx.send(Event::Users(supplemental.users)).await;
+                                    }
+                                    if !supplemental.lazy_private_channels.is_empty() {
+                                        let _ = tx
+                                            .send(Event::PrivateChannels(
+                                                supplemental.lazy_private_channels,
+                                            ))
+                                            .await;
+                                    }
+                                }
+                            }
+                            other => {
+                                if logged_events.insert(other.to_string()) {
+                                    info!("gateway dispatch {other}");
+                                }
+                                dispatch(other, &value["d"], tx).await;
+                            }
                         }
                     }
                     1 => {
@@ -290,7 +313,6 @@ fn identify(token: &str, fp: &Fingerprint) -> Value {
                 "read_state_version": 0,
                 "user_guild_settings_version": -1,
                 "user_settings_version": -1,
-                "private_channels_version": "0",
                 "api_code_version": 0
             }
         }
@@ -361,10 +383,12 @@ async fn dispatch(name: &str, data: &Value, tx: &mpsc::Sender<Event>) {
 }
 
 fn parse<T: DeserializeOwned>(name: &str, value: &Value) -> Option<T> {
-    match serde_json::from_value(value.clone()) {
+    let text = value.to_string();
+    let mut deserializer = serde_json::Deserializer::from_str(&text);
+    match serde_path_to_error::deserialize(&mut deserializer) {
         Ok(parsed) => Some(parsed),
         Err(e) => {
-            warn!("{name} parse failed: {e}");
+            warn!("{name} parse failed at {}: {}", e.path(), e.inner());
             None
         }
     }
