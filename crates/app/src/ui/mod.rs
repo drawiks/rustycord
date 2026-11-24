@@ -72,10 +72,26 @@ impl App {
         });
         let transcript = cx.new(|cx| MessageScrollerState::new(0, cx));
         let (ui_tx, mut ui_rx) = unbounded_channel();
+        let debug = debug_render();
 
         cx.spawn(async move |this, cx| {
-            while let Some(event) = ui_rx.recv().await {
-                if this.update(cx, |app, cx| app.handle(event, cx)).is_err() {
+            while let Some(first) = ui_rx.recv().await {
+                let mut batch = vec![first];
+                while let Ok(event) = ui_rx.try_recv() {
+                    batch.push(event);
+                }
+                let count = batch.len();
+                let started = Instant::now();
+                let updated = this.update(cx, |app, cx| {
+                    for event in batch {
+                        app.handle(event, cx);
+                    }
+                    cx.notify();
+                });
+                if debug {
+                    tracing::info!("apply {count} events in {:?}", started.elapsed());
+                }
+                if updated.is_err() {
                     break;
                 }
             }
@@ -236,7 +252,6 @@ impl App {
                 }
             }
         }
-        cx.notify();
     }
 
     fn pick_default_channel(&mut self, cx: &mut Context<Self>) {
@@ -460,6 +475,14 @@ impl App {
     }
 
     fn ensure_text_cache(&mut self, channel_id: &str) {
+        let ids: HashSet<&str> = self
+            .state
+            .messages(channel_id)
+            .iter()
+            .map(|message| message.id.as_str())
+            .collect();
+        self.text_cache.retain(|id, _| ids.contains(id.as_str()));
+
         let mut missing: Vec<(Id, String)> = Vec::new();
         for message in self.state.messages(channel_id) {
             if !message.content.is_empty() && !self.text_cache.contains_key(&message.id) {
@@ -772,4 +795,11 @@ fn common_affixes(old: &[Row], new: &[Row]) -> (usize, usize) {
         .count()
         .min(limit);
     (prefix, suffix)
+}
+
+fn debug_render() -> bool {
+    use std::sync::OnceLock;
+
+    static DEBUG: OnceLock<bool> = OnceLock::new();
+    *DEBUG.get_or_init(|| std::env::var_os("RUSTCORD_DEBUG_RENDER").is_some())
 }

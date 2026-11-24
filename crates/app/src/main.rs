@@ -11,6 +11,9 @@ use std::{borrow::Cow, sync::Arc};
 
 use gpui_kit::{Bounds, TitlebarOptions, WindowBounds, WindowOptions, point, prelude::*, px, size};
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 fn main() {
     let _logs = init_logging();
     let client = Arc::new(http::WreqHttpClient::new());

@@ -49,24 +49,19 @@ impl App {
                 .bg(rgb(RAIL_HOVER)),
         );
 
-        let guilds: Vec<(Id, String, Option<String>)> = self
-            .state
-            .guilds
-            .iter()
-            .map(|guild| (guild.id.clone(), guild.name.clone(), guild.icon.clone()))
-            .collect();
-        for (id, name, icon) in guilds {
+        for guild in &self.state.guilds {
+            let id = guild.id.clone();
             let selected = self.selected_guild.as_ref() == Some(&id);
             let (unread, mentions) = self.guild_unread(&id);
-            let visual = match icon {
-                Some(icon) => gpui_kit::img(guild_icon_url(&id, &icon))
+            let visual = match &guild.icon {
+                Some(icon) => gpui_kit::img(guild_icon_url(&id, icon))
                     .size(px(48.))
                     .into_any_element(),
                 None => div()
                     .text_size(px(16.))
                     .font_weight(FontWeight::BOLD)
                     .text_color(rgb(0xffffff))
-                    .child(initials(&name))
+                    .child(initials(&guild.name))
                     .into_any_element(),
             };
             let click_id = id.clone();

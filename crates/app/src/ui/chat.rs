@@ -60,13 +60,25 @@ impl App {
             None => String::new(),
         };
 
+        let debug = debug_render();
+        let render_started = Instant::now();
         let weak = cx.entity().downgrade();
         let scroller = MessageScroller::new(
             "transcript",
             self.transcript.clone(),
-            move |index, _window, cx| match weak.upgrade() {
-                Some(entity) => entity.read(cx).render_row(index, &weak),
-                None => div().into_any_element(),
+            move |index, _window, cx| {
+                let row_started = Instant::now();
+                let element = match weak.upgrade() {
+                    Some(entity) => entity.read(cx).render_row(index, &weak),
+                    None => div().into_any_element(),
+                };
+                if debug {
+                    let elapsed = row_started.elapsed();
+                    if elapsed > Duration::from_millis(1) {
+                        tracing::warn!("render_row {index}: {elapsed:?}");
+                    }
+                }
+                element
             },
         )
         .scrollbar(true)
@@ -88,6 +100,14 @@ impl App {
         );
 
         let composer = self.render_composer(cx);
+
+        if debug {
+            tracing::info!(
+                "render_chat: {:?}, rows={}",
+                render_started.elapsed(),
+                self.rows.len()
+            );
+        }
 
         div()
             .flex_1()

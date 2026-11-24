@@ -71,29 +71,27 @@ impl App {
         let Some(guild) = self.state.guild(guild_id) else {
             return list;
         };
-        let channels = guild.channels.clone();
+        let channels = &guild.channels;
 
-        let mut categories: Vec<Channel> = channels
+        let mut categories: Vec<&Channel> = channels
             .iter()
             .filter(|channel| channel.kind == Channel::CATEGORY)
-            .cloned()
             .collect();
         categories.sort_by_key(|category| category.position);
-        let category_ids: HashSet<Id> = categories
+        let category_ids: HashSet<&str> = categories
             .iter()
-            .map(|category| category.id.clone())
+            .map(|category| category.id.as_str())
             .collect();
 
-        let mut loose: Vec<Channel> = channels
+        let mut loose: Vec<&Channel> = channels
             .iter()
             .filter(|channel| {
                 channel.is_text()
                     && channel
                         .parent_id
-                        .as_ref()
+                        .as_deref()
                         .is_none_or(|parent| !category_ids.contains(parent))
             })
-            .cloned()
             .collect();
         loose.sort_by_key(|channel| channel.position);
 
@@ -110,19 +108,21 @@ impl App {
         }
 
         for category in categories {
+            let mut children: Vec<&Channel> = channels
+                .iter()
+                .filter(|channel| {
+                    channel.parent_id.as_deref() == Some(category.id.as_str()) && channel.is_text()
+                })
+                .collect();
+            if children.is_empty() {
+                continue;
+            }
+            children.sort_by_key(|channel| channel.position);
             let collapsed = self.collapsed.contains(&category.id);
-            list = list.child(self.category_row(&category, collapsed, cx));
+            list = list.child(self.category_row(category, collapsed, cx));
             if collapsed {
                 continue;
             }
-            let mut children: Vec<Channel> = channels
-                .iter()
-                .filter(|channel| {
-                    channel.parent_id.as_ref() == Some(&category.id) && channel.is_text()
-                })
-                .cloned()
-                .collect();
-            children.sort_by_key(|channel| channel.position);
             for channel in children {
                 list = list.child(self.channel_row(channel, 1, cx));
             }
@@ -174,14 +174,14 @@ impl App {
 
     fn channel_row(
         &self,
-        channel: Channel,
+        channel: &Channel,
         depth: usize,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let selected = self.selected_channel.as_ref() == Some(&channel.id);
-        let (unread, mentions) = self.channel_unread(&channel);
+        let (unread, mentions) = self.channel_unread(channel);
         let id = channel.id.clone();
-        let name = self.state.channel_display_name(&channel);
+        let name = self.state.channel_display_name(channel);
 
         let mut row = div()
             .id(gpui_kit::SharedString::from(format!(
@@ -236,12 +236,11 @@ impl App {
     }
 
     fn dm_list(&mut self, mut list: Stateful<Div>, cx: &mut Context<Self>) -> Stateful<Div> {
-        let mut channels: Vec<Channel> = self
+        let mut channels: Vec<&Channel> = self
             .state
             .channels
             .iter()
             .filter(|channel| channel.kind == Channel::DM || channel.kind == Channel::GROUP_DM)
-            .cloned()
             .collect();
         channels.sort_by_key(|channel| {
             std::cmp::Reverse(
@@ -263,12 +262,11 @@ impl App {
 
         for channel in channels {
             let selected = self.selected_channel.as_ref() == Some(&channel.id);
-            let (unread, mentions) = self.channel_unread(&channel);
+            let (unread, mentions) = self.channel_unread(channel);
             let id = channel.id.clone();
-            let name = self.state.channel_display_name(&channel);
-            let user = dm_user(&self.state, &channel);
+            let name = self.state.channel_display_name(channel);
+            let user = dm_user(&self.state, channel);
             let presence = user
-                .as_ref()
                 .map(|user| self.state.presence(&user.id).to_string())
                 .unwrap_or_default();
             let time = channel
@@ -289,7 +287,7 @@ impl App {
                 .cursor_pointer()
                 .bg(if selected { rgb(ACTIVE) } else { rgb(SIDEBAR) })
                 .hover(|style| style.bg(rgb(RAIL_HOVER)))
-                .child(user_avatar(user.as_ref(), &name, &presence))
+                .child(user_avatar(user, &name, &presence))
                 .child(
                     div()
                         .flex()

@@ -191,13 +191,11 @@ pub(super) fn user_avatar(
         )
 }
 
-pub(super) fn dm_user(state: &State, channel: &Channel) -> Option<User> {
-    channel.recipients.first().cloned().or_else(|| {
-        channel
-            .recipient_ids
-            .iter()
-            .find_map(|id| state.user(id).cloned())
-    })
+pub(super) fn dm_user<'a>(state: &'a State, channel: &'a Channel) -> Option<&'a User> {
+    channel
+        .recipients
+        .first()
+        .or_else(|| channel.recipient_ids.iter().find_map(|id| state.user(id)))
 }
 
 pub(super) fn snowflake_time(id: &str) -> Option<DateTime<Local>> {
