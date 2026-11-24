@@ -149,18 +149,24 @@ impl App {
                     };
                 }
                 let ready = matches!(event, Event::Ready(_));
-                let scroll = match &event {
-                    Event::MessageCreate(message) => {
-                        Some(&message.channel_id) == self.selected_channel.as_ref()
-                    }
-                    _ => false,
+                let (scroll, mine) = match &event {
+                    Event::MessageCreate(message) => (
+                        Some(&message.channel_id) == self.selected_channel.as_ref(),
+                        self.state
+                            .me
+                            .as_ref()
+                            .is_some_and(|me| me.id == message.author.id),
+                    ),
+                    _ => (false, false),
                 };
                 self.state.apply(&event);
                 if ready {
                     self.pick_default_channel(cx);
                 }
                 if scroll {
-                    self.scroll.scroll_to_bottom();
+                    if mine || self.at_bottom() {
+                        self.scroll.scroll_to_bottom();
+                    }
                     if let Some(channel_id) = self.selected_channel.clone() {
                         self.mark_read(&channel_id);
                     }
@@ -229,6 +235,15 @@ impl App {
         self.mark_read(&channel_id);
         self.scroll.scroll_to_bottom();
         cx.notify();
+    }
+
+    fn at_bottom(&self) -> bool {
+        (self.scroll.max_offset().y - self.scroll.offset().y) < px(60.)
+    }
+
+    fn focus_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let handle = self.composer.read(cx).focus_handle(cx);
+        window.focus(&handle, cx);
     }
 
     fn mark_read(&self, channel_id: &str) {
@@ -481,7 +496,10 @@ impl App {
                 .text_color(rgb(0xffffff))
                 .cursor_pointer()
                 .child("@")
-                .on_click(cx.listener(|this, _, _, cx| this.select_guild(None, cx))),
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.select_guild(None, cx);
+                    this.focus_composer(window, cx);
+                })),
         );
 
         let guilds: Vec<(String, String, Option<String>)> = self
@@ -517,8 +535,9 @@ impl App {
                     .bg(if selected { rgb(ACCENT) } else { rgb(SIDEBAR) })
                     .cursor_pointer()
                     .child(visual)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.select_guild(Some(click_id.clone()), cx)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.select_guild(Some(click_id.clone()), cx);
+                        this.focus_composer(window, cx);
                     })),
             );
         }
@@ -586,7 +605,10 @@ impl App {
                         .truncate()
                         .child(format!("#{}", channel.display_name())),
                 )
-                .on_click(cx.listener(move |this, _, _, cx| this.select_channel(id.clone(), cx)));
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.select_channel(id.clone(), cx);
+                    this.focus_composer(window, cx);
+                }));
             if unread {
                 row = row.child(div().size(px(6.)).rounded(px(3.)).bg(rgb(DANGER)));
             }
