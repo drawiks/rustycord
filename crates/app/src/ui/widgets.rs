@@ -243,3 +243,37 @@ pub(super) fn empty_state(icon: IconName, title: &str, hint: &str) -> impl IntoE
                 .child(hint.to_string()),
         )
 }
+
+pub(super) fn fit_size(
+    width: Option<u32>,
+    height: Option<u32>,
+    max_w: f32,
+    max_h: f32,
+) -> (f32, f32) {
+    let (w, h) = match (width, height) {
+        (Some(w), Some(h)) if w > 0 && h > 0 => (w as f32, h as f32),
+        _ => return (max_w.min(420.), (max_w.min(420.) * 0.6).min(max_h)),
+    };
+    let scale = (max_w / w).min(max_h / h).min(1.0);
+    ((w * scale).max(1.0), (h * scale).max(1.0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fits_images_into_bounds() {
+        assert_eq!(fit_size(Some(800), Some(400), 420., 320.), (420., 210.));
+        assert_eq!(fit_size(Some(200), Some(100), 420., 320.), (200., 100.));
+        let (w, h) = fit_size(None, None, 420., 320.);
+        assert!(w <= 420. && h <= 320.);
+    }
+
+    #[test]
+    fn snowflake_time_is_monotonic() {
+        let a = snowflake_time("175928847299117063").unwrap();
+        let b = snowflake_time("175928847299117064").unwrap();
+        assert!(b >= a);
+    }
+}

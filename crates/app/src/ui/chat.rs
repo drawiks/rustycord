@@ -36,7 +36,7 @@ impl App {
         let channel_name = self
             .state
             .channel(&channel_id)
-            .map(|c| c.display_name())
+            .map(|channel| self.state.channel_display_name(channel))
             .unwrap_or_else(|| channel_id.clone());
 
         let messages: Vec<(Message, Vec<rustycord_discord::Reaction>)> = self
@@ -496,6 +496,7 @@ impl App {
             if is_image(&attachment.content_type, &attachment.filename) {
                 let url = attachment.url.clone();
                 let click_url = url.clone();
+                let (image_w, image_h) = fit_size(attachment.width, attachment.height, 420., 320.);
                 content = content.child(
                     div()
                         .id(gpui_kit::SharedString::from(format!(
@@ -506,8 +507,9 @@ impl App {
                         .cursor_pointer()
                         .child(
                             gpui_kit::img(url)
-                                .max_w(px(420.))
-                                .max_h(px(320.))
+                                .w(px(image_w))
+                                .h(px(image_h))
+                                .object_fit(gpui_kit::ObjectFit::Contain)
                                 .rounded(px(4.)),
                         )
                         .on_click(cx.listener(move |this, _, _, cx| {
@@ -545,6 +547,7 @@ impl App {
             if let Some(image) = &embed.image {
                 let url = image.url.clone();
                 let click_url = url.clone();
+                let (image_w, image_h) = fit_size(image.width, image.height, 420., 320.);
                 content = content.child(
                     div()
                         .id(gpui_kit::SharedString::from(format!(
@@ -555,8 +558,9 @@ impl App {
                         .cursor_pointer()
                         .child(
                             gpui_kit::img(url)
-                                .max_w(px(420.))
-                                .max_h(px(320.))
+                                .w(px(image_w))
+                                .h(px(image_h))
+                                .object_fit(gpui_kit::ObjectFit::Contain)
                                 .rounded(px(4.)),
                         )
                         .on_click(cx.listener(move |this, _, _, cx| {
@@ -566,11 +570,13 @@ impl App {
                 );
             }
             if let Some(thumbnail) = &embed.thumbnail {
+                let (image_w, image_h) = fit_size(thumbnail.width, thumbnail.height, 80., 80.);
                 content = content.child(
                     div().mt(px(4.)).child(
                         gpui_kit::img(thumbnail.url.clone())
-                            .max_w(px(80.))
-                            .max_h(px(80.))
+                            .w(px(image_w))
+                            .h(px(image_h))
+                            .object_fit(gpui_kit::ObjectFit::Contain)
                             .rounded(px(4.)),
                     ),
                 );
@@ -600,7 +606,7 @@ impl App {
                         })
                         .text_size(px(12.))
                         .cursor_pointer()
-                        .child(emoji_text)
+                        .child(format!("{emoji_text} {}", reaction.count))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.react(&message, &emoji);
                             cx.notify();

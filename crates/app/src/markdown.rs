@@ -40,6 +40,7 @@ pub fn build(content: &str, state: &State) -> Rendered {
     let spans = spans(content, state);
     let base = TextStyle {
         color: rgb(TEXT).into(),
+        font_family: "Inter Variable".into(),
         font_size: px(14.).into(),
         line_height: px(20.).into(),
         ..TextStyle::default()
@@ -81,7 +82,11 @@ pub fn build(content: &str, state: &State) -> Rendered {
             },
             ..Default::default()
         };
-        runs.push(base.clone().highlight(highlight).to_run(span.text.len()));
+        let mut run_style = base.clone().highlight(highlight);
+        if span.style.code {
+            run_style.font_family = "JetBrains Mono".into();
+        }
+        runs.push(run_style.to_run(span.text.len()));
     }
 
     Rendered {

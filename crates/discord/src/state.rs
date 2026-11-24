@@ -42,6 +42,11 @@ impl State {
                         }
                     }
                 }
+                if let Some(me) = &self.me
+                    && !self.presences.contains_key(&me.id)
+                {
+                    self.presences.insert(me.id.clone(), "online".to_string());
+                }
                 self.guilds = ready.guilds.clone();
                 self.channels = ready.private_channels.clone();
                 self.messages.clear();

@@ -49,6 +49,7 @@ impl App {
         div()
             .size_full()
             .flex()
+            .font_family("Inter Variable")
             .items_center()
             .justify_center()
             .bg(rgb(RAIL))

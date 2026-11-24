@@ -310,6 +310,20 @@ impl App {
     }
 
     fn focus_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let placeholder = match self
+            .selected_channel
+            .as_ref()
+            .and_then(|id| self.state.channel(id))
+        {
+            Some(channel) if channel.kind == Channel::DM || channel.kind == Channel::GROUP_DM => {
+                format!("Message @{}", self.state.channel_display_name(channel))
+            }
+            Some(channel) => format!("Message #{}", self.state.channel_display_name(channel)),
+            None => "Message".to_string(),
+        };
+        self.composer.update(cx, |composer, cx| {
+            composer.set_placeholder(placeholder, window, cx)
+        });
         let handle = self.composer.read(cx).focus_handle(cx);
         window.focus(&handle, cx);
     }
@@ -542,6 +556,7 @@ impl App {
             .relative()
             .size_full()
             .flex()
+            .font_family("Inter Variable")
             .bg(rgb(RAIL))
             .child(self.render_rail(cx))
             .child(self.render_sidebar(cx))
