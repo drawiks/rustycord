@@ -55,6 +55,9 @@ impl State {
             }
             Event::MessageCreate(message) => {
                 self.remember_user(&message.author);
+                if let Some(channel) = self.channel_mut(&message.channel_id) {
+                    channel.last_message_id = Some(message.id.clone());
+                }
                 self.insert_message((**message).clone());
             }
             Event::MessageUpdate(update) => {
@@ -323,6 +326,16 @@ impl State {
             guild.channels.retain(|c| c.id != channel.id);
         }
         self.channels.retain(|c| c.id != channel.id);
+    }
+
+    fn channel_mut(&mut self, id: &str) -> Option<&mut Channel> {
+        if let Some(channel) = self.channels.iter_mut().find(|channel| channel.id == id) {
+            return Some(channel);
+        }
+        self.guilds
+            .iter_mut()
+            .flat_map(|guild| &mut guild.channels)
+            .find(|channel| channel.id == id)
     }
 
     fn message_mut(&mut self, channel_id: &str, message_id: &str) -> Option<&mut Message> {

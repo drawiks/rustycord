@@ -46,6 +46,8 @@ pub struct App {
     pending_token: Option<String>,
     ack_tokens: HashMap<Id, String>,
     last_ack: Option<Instant>,
+    loading_older: bool,
+    pending_anchor: Option<Id>,
     subscriptions: Vec<Subscription>,
 }
 
@@ -86,6 +88,8 @@ impl App {
             pending_token: None,
             ack_tokens: HashMap::new(),
             last_ack: None,
+            loading_older: false,
+            pending_anchor: None,
             subscriptions: Vec::new(),
         };
 
@@ -192,12 +196,17 @@ impl App {
                 messages,
             } => {
                 let first_load = self.state.messages(&channel_id).is_empty();
+                let received = messages.len();
                 self.state.insert_history(&channel_id, messages);
+                self.loading_older = false;
+                if received == 0 {
+                    self.pending_anchor = None;
+                }
                 if Some(&channel_id) == self.selected_channel.as_ref() {
                     if first_load {
                         self.scroll.scroll_to_bottom();
+                        self.mark_read(&channel_id, true);
                     }
-                    self.mark_read(&channel_id, true);
                 }
             }
         }
@@ -252,6 +261,35 @@ impl App {
         cx.notify();
     }
 
+    fn channel_unread(&self, channel: &Channel) -> (bool, u32) {
+        let read = self.state.read_states.get(&channel.id);
+        let last = channel
+            .last_message_id
+            .as_deref()
+            .map(snowflake)
+            .unwrap_or(0);
+        let read_last = read
+            .and_then(|state| state.last_message_id.as_deref())
+            .map(snowflake)
+            .unwrap_or(0);
+        let mentions = read.map(|state| state.mention_count).unwrap_or(0);
+        (last > read_last, mentions)
+    }
+
+    fn guild_unread(&self, guild_id: &str) -> (bool, u32) {
+        let Some(guild) = self.state.guild(guild_id) else {
+            return (false, 0);
+        };
+        let mut unread = false;
+        let mut mentions = 0;
+        for channel in guild.channels.iter().filter(|channel| channel.is_text()) {
+            let (channel_unread, channel_mentions) = self.channel_unread(channel);
+            unread |= channel_unread;
+            mentions += channel_mentions;
+        }
+        (unread, mentions)
+    }
+
     fn at_bottom(&self) -> bool {
         (self.scroll.max_offset().y - self.scroll.offset().y) < px(60.)
     }
@@ -289,6 +327,25 @@ impl App {
             read.id = channel_id.to_string();
             read.last_message_id = Some(message_id);
         }
+    }
+
+    fn maybe_load_older(&mut self) {
+        if self.loading_older {
+            return;
+        }
+        let Some(channel_id) = self.selected_channel.clone() else {
+            return;
+        };
+        if self.state.messages(&channel_id).len() < 50 || self.scroll.offset().y > px(120.) {
+            return;
+        }
+        self.pending_anchor = self
+            .state
+            .messages(&channel_id)
+            .first()
+            .map(|message| message.id.clone());
+        self.loading_older = true;
+        self.load_older();
     }
 
     fn load_older(&self) {
@@ -618,23 +675,40 @@ impl App {
                     .child(initials(&name))
                     .into_any_element(),
             };
-            rail = rail.child(
-                div()
-                    .id(element_id)
-                    .size(px(48.))
-                    .rounded(px(16.))
-                    .overflow_hidden()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .bg(if selected { rgb(ACCENT) } else { rgb(SIDEBAR) })
-                    .cursor_pointer()
-                    .child(visual)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.select_guild(Some(click_id.clone()), cx);
-                        this.focus_composer(window, cx);
-                    })),
-            );
+            let (unread, mentions) = self.guild_unread(&id);
+            let mut button = div()
+                .id(element_id)
+                .relative()
+                .size(px(48.))
+                .rounded(px(16.))
+                .overflow_hidden()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(if selected { rgb(ACCENT) } else { rgb(SIDEBAR) })
+                .cursor_pointer()
+                .child(visual);
+            if mentions > 0 {
+                button = button.child(
+                    div()
+                        .absolute()
+                        .bottom(px(0.))
+                        .right(px(0.))
+                        .child(mention_badge(mentions)),
+                );
+            } else if unread {
+                button = button.child(
+                    div()
+                        .absolute()
+                        .bottom(px(2.))
+                        .right(px(2.))
+                        .child(unread_dot()),
+                );
+            }
+            rail = rail.child(button.on_click(cx.listener(move |this, _, window, cx| {
+                this.select_guild(Some(click_id.clone()), cx);
+                this.focus_composer(window, cx);
+            })));
         }
 
         rail
@@ -687,12 +761,7 @@ impl App {
         for channel in channels {
             let selected = self.selected_channel.as_ref() == Some(&channel.id);
             let id = channel.id.clone();
-            let unread = self
-                .state
-                .read_states
-                .get(&channel.id)
-                .map(|read| read.mention_count > 0)
-                .unwrap_or(false);
+            let (unread, mentions) = self.channel_unread(&channel);
             let mut row = div()
                 .id(gpui_kit::SharedString::from(format!(
                     "channel-{}",
@@ -714,14 +783,28 @@ impl App {
                     div()
                         .flex_1()
                         .truncate()
+                        .font_weight(if unread && !selected {
+                            FontWeight::MEDIUM
+                        } else {
+                            FontWeight::NORMAL
+                        })
+                        .text_color(rgb(if selected {
+                            0xffffff
+                        } else if unread {
+                            0xf2f3f5
+                        } else {
+                            MUTED
+                        }))
                         .child(format!("#{}", self.state.channel_display_name(&channel))),
                 )
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.select_channel(id.clone(), cx);
                     this.focus_composer(window, cx);
                 }));
-            if unread {
-                row = row.child(div().size(px(6.)).rounded(px(3.)).bg(rgb(DANGER)));
+            if mentions > 0 {
+                row = row.child(mention_badge(mentions));
+            } else if unread {
+                row = row.child(unread_dot());
             }
             list = list.child(row);
         }
@@ -846,12 +929,19 @@ impl App {
             .h_full()
             .overflow_y_scroll()
             .track_scroll(&self.scroll)
+            .on_scroll_wheel(cx.listener(
+                |this, _event: &gpui_kit::ScrollWheelEvent, _window, cx| {
+                    this.maybe_load_older();
+                    cx.notify();
+                },
+            ))
             .flex()
             .flex_col()
             .gap(px(2.))
             .px(px(10.))
             .py(px(16.));
 
+        let mut child_index = 0usize;
         if self.state.messages(&channel_id).len() >= 50 {
             list = list.child(
                 div()
@@ -867,6 +957,7 @@ impl App {
                         cx.notify();
                     })),
             );
+            child_index += 1;
         }
         if messages.is_empty() {
             list = list.child(
@@ -875,6 +966,7 @@ impl App {
                     .text_color(rgb(FAINT))
                     .child("No messages loaded"),
             );
+            child_index += 1;
         }
         let read_marker = self
             .state
@@ -894,6 +986,7 @@ impl App {
             {
                 list = list.child(divider(&day_label(date), FAINT));
                 last_date = Some(date);
+                child_index += 1;
             }
             if !unread_shown
                 && !first
@@ -902,6 +995,7 @@ impl App {
             {
                 list = list.child(divider("NEW", DANGER));
                 unread_shown = true;
+                child_index += 1;
             }
             let compact = match (&previous, timestamp) {
                 (Some((author, at)), Some(now)) => {
@@ -910,8 +1004,13 @@ impl App {
                 }
                 _ => false,
             };
+            if self.pending_anchor.as_ref() == Some(&message.id) {
+                self.scroll.scroll_to_top_of_item(child_index);
+                self.pending_anchor = None;
+            }
             previous = timestamp.map(|time| (message.author.id.clone(), time));
             first = false;
+            child_index += 1;
             list = list.child(self.render_message(message, reactions, compact, cx));
         }
 
@@ -1427,6 +1526,30 @@ fn is_image(content_type: &Option<String>, filename: &str) -> bool {
         extension.to_ascii_lowercase().as_str(),
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "avif" | "bmp"
     )
+}
+
+fn unread_dot() -> impl IntoElement {
+    div().size(px(8.)).rounded(px(4.)).bg(rgb(0xf2f3f5))
+}
+
+fn mention_badge(count: u32) -> impl IntoElement {
+    div()
+        .min_w(px(16.))
+        .h(px(16.))
+        .px(px(4.))
+        .rounded(px(8.))
+        .bg(rgb(DANGER))
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_size(px(10.))
+        .font_weight(FontWeight::BOLD)
+        .text_color(rgb(0xffffff))
+        .child(if count > 99 {
+            "99+".to_string()
+        } else {
+            count.to_string()
+        })
 }
 
 fn divider(label: &str, color: u32) -> impl IntoElement {
