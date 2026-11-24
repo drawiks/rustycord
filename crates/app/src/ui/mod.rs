@@ -50,6 +50,7 @@ pub struct App {
     editing: Option<(Id, Id)>,
     replying: Option<Message>,
     collapsed: HashSet<Id>,
+    image_viewer: Option<String>,
     pending_token: Option<String>,
     ack_tokens: HashMap<Id, String>,
     last_ack: Option<Instant>,
@@ -93,6 +94,7 @@ impl App {
             editing: None,
             replying: None,
             collapsed: HashSet::new(),
+            image_viewer: None,
             pending_token: None,
             ack_tokens: HashMap::new(),
             last_ack: None,
@@ -529,13 +531,40 @@ impl App {
     }
 
     fn render_main(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
+        let mut root = div()
+            .relative()
             .size_full()
             .flex()
             .bg(rgb(RAIL))
             .child(self.render_rail(cx))
             .child(self.render_sidebar(cx))
-            .child(self.render_chat(cx))
+            .child(self.render_chat(cx));
+
+        if let Some(url) = self.image_viewer.clone() {
+            root = root.child(
+                div()
+                    .id("image-viewer")
+                    .absolute()
+                    .size_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(gpui_kit::rgba(0x000000d9))
+                    .cursor_pointer()
+                    .child(
+                        gpui_kit::img(url)
+                            .max_w(px(900.))
+                            .max_h(px(700.))
+                            .rounded(px(6.)),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.image_viewer = None;
+                        cx.notify();
+                    })),
+            );
+        }
+
+        root
     }
 }
 

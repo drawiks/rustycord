@@ -10,7 +10,7 @@ impl App {
                 .flex()
                 .flex_col()
                 .bg(rgb(CHAT))
-                .child(self.render_top_bar(None))
+                .child(self.render_top_bar(None, cx))
                 .child(
                     div()
                         .flex_1()
@@ -174,7 +174,7 @@ impl App {
             );
         }
 
-        let header = self.render_top_bar(Some(format!("#{channel_name}")));
+        let header = self.render_top_bar(Some(channel_name.clone()), cx);
 
         let status = match &typing {
             Some(user_id) => {
@@ -309,7 +309,7 @@ impl App {
             .into_any_element()
     }
 
-    fn render_top_bar(&self, title: Option<String>) -> impl IntoElement {
+    fn render_top_bar(&self, title: Option<String>, cx: &Context<Self>) -> impl IntoElement {
         let channel = self
             .selected_channel
             .as_ref()
@@ -382,15 +382,33 @@ impl App {
         );
 
         if let Some(error) = &self.error {
+            let text = error.clone();
             bar = bar.child(
                 div()
+                    .id("dismiss-error")
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
                     .px(px(8.))
                     .py(px(2.))
                     .rounded(px(4.))
                     .bg(rgb(DANGER))
-                    .text_size(px(11.))
-                    .text_color(rgb(0xffffff))
-                    .child(error.clone()),
+                    .cursor_pointer()
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(rgb(0xffffff))
+                            .child(text),
+                    )
+                    .child(
+                        gpui_kit::component::Icon::new(IconName::X)
+                            .size(px(12.))
+                            .text_color(rgb(0xffffff)),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.error = None;
+                        cx.notify();
+                    })),
             );
         }
 
@@ -480,13 +498,26 @@ impl App {
 
         for attachment in &message.attachments {
             if is_image(&attachment.content_type, &attachment.filename) {
+                let url = attachment.url.clone();
+                let click_url = url.clone();
                 content = content.child(
-                    div().mt(px(4.)).child(
-                        gpui_kit::img(attachment.url.clone())
-                            .max_w(px(420.))
-                            .max_h(px(320.))
-                            .rounded(px(4.)),
-                    ),
+                    div()
+                        .id(gpui_kit::SharedString::from(format!(
+                            "attachment-{}",
+                            attachment.id
+                        )))
+                        .mt(px(4.))
+                        .cursor_pointer()
+                        .child(
+                            gpui_kit::img(url)
+                                .max_w(px(420.))
+                                .max_h(px(320.))
+                                .rounded(px(4.)),
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.image_viewer = Some(click_url.clone());
+                            cx.notify();
+                        })),
                 );
             } else {
                 content = content.child(
@@ -516,13 +547,26 @@ impl App {
                 );
             }
             if let Some(image) = &embed.image {
+                let url = image.url.clone();
+                let click_url = url.clone();
                 content = content.child(
-                    div().mt(px(4.)).child(
-                        gpui_kit::img(image.url.clone())
-                            .max_w(px(420.))
-                            .max_h(px(320.))
-                            .rounded(px(4.)),
-                    ),
+                    div()
+                        .id(gpui_kit::SharedString::from(format!(
+                            "embed-image-{}",
+                            message.id
+                        )))
+                        .mt(px(4.))
+                        .cursor_pointer()
+                        .child(
+                            gpui_kit::img(url)
+                                .max_w(px(420.))
+                                .max_h(px(320.))
+                                .rounded(px(4.)),
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.image_viewer = Some(click_url.clone());
+                            cx.notify();
+                        })),
                 );
             }
             if let Some(thumbnail) = &embed.thumbnail {

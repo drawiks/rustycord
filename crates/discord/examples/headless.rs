@@ -39,7 +39,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     state.users.len()
                 );
                 for guild in &state.guilds {
-                    println!("guild: {}", guild.name);
+                    println!("guild: {} ({} channels)", guild.name, guild.channels.len());
+                    for channel in &guild.channels {
+                        println!(
+                            "  {:?} type={} parent={:?} pos={}",
+                            channel.name, channel.kind, channel.parent_id, channel.position
+                        );
+                    }
                 }
                 for channel in &state.channels {
                     println!("dm: {}", state.channel_display_name(channel));
