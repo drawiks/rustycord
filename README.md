@@ -9,7 +9,10 @@ Native Discord client written in Rust with [GPUI](https://gpui.rs) (Zed's UI fra
 
 ## Status
 
-Early development: guilds/channels, DM list, message history, sending, reactions, unread state, typing indicator.
+Working MVP: guild/channel navigation, DM list, message history with pagination, sending, editing and deleting
+your messages, reactions, markdown (bold/italic/strike/code/quotes), mentions, unread dots, typing indicator,
+avatars, attachments and embed images. Token is stored in the OS keyring. Voice, search and uploads are not
+implemented yet.
 
 ## Build
 
