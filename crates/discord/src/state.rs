@@ -29,6 +29,19 @@ impl State {
                     self.remember_user(user);
                 }
                 self.remember_user(&ready.user);
+                for presence in &ready.presences {
+                    self.apply_presence(presence);
+                }
+                if let Some(merged) = &ready.merged_presences {
+                    for presence in &merged.friends {
+                        self.apply_presence(presence);
+                    }
+                    for guild in &merged.guilds {
+                        for presence in guild {
+                            self.apply_presence(presence);
+                        }
+                    }
+                }
                 self.guilds = ready.guilds.clone();
                 self.channels = ready.private_channels.clone();
                 self.messages.clear();
@@ -182,13 +195,7 @@ impl State {
                 }
             }
             Event::PresenceUpdate(presence) => {
-                if !presence.user.id.is_empty() {
-                    self.remember_user(&presence.user);
-                    if !presence.status.is_empty() {
-                        self.presences
-                            .insert(presence.user.id.clone(), presence.status.clone());
-                    }
-                }
+                self.apply_presence(presence);
             }
             Event::UserUpdate(user) => {
                 self.remember_user(user);
@@ -209,6 +216,22 @@ impl State {
             .get(id)
             .map(String::as_str)
             .unwrap_or("offline")
+    }
+
+    fn apply_presence(&mut self, presence: &crate::models::Presence) {
+        let id = presence
+            .user_id
+            .clone()
+            .or_else(|| (!presence.user.id.is_empty()).then(|| presence.user.id.clone()));
+        let Some(id) = id else {
+            return;
+        };
+        if !presence.user.id.is_empty() {
+            self.remember_user(&presence.user);
+        }
+        if !presence.status.is_empty() {
+            self.presences.insert(id, presence.status.clone());
+        }
     }
 
     fn remember_user(&mut self, user: &User) {
@@ -425,6 +448,7 @@ mod tests {
                 username: "a".to_string(),
                 ..Default::default()
             },
+            user_id: None,
             status: "idle".to_string(),
         })));
         assert_eq!(state.presence("7"), "idle");

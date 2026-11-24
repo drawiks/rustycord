@@ -315,6 +315,10 @@ pub struct Ready {
     pub private_channels: Vec<Channel>,
     #[serde(default, deserialize_with = "null_default")]
     pub users: Vec<User>,
+    #[serde(default, deserialize_with = "null_default")]
+    pub presences: Vec<Presence>,
+    #[serde(default)]
+    pub merged_presences: Option<MergedPresences>,
     #[serde(default)]
     pub read_state: Option<ReadStateContainer>,
 }
@@ -332,7 +336,17 @@ pub struct Presence {
     #[serde(default)]
     pub user: User,
     #[serde(default)]
+    pub user_id: Option<Id>,
+    #[serde(default)]
     pub status: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct MergedPresences {
+    #[serde(default, deserialize_with = "null_default")]
+    pub friends: Vec<Presence>,
+    #[serde(default, deserialize_with = "null_default")]
+    pub guilds: Vec<Vec<Presence>>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
