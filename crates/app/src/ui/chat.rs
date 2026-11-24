@@ -96,11 +96,7 @@ impl App {
             ));
             child_index += 1;
         }
-        let read_marker = self
-            .state
-            .read_states
-            .get(&channel_id)
-            .and_then(|state| state.last_message_id.clone());
+        let read_marker = self.unread_marker.clone();
         let mut previous: Option<(Id, DateTime<Local>)> = None;
         let mut last_date: Option<NaiveDate> = None;
         let mut unread_shown = false;

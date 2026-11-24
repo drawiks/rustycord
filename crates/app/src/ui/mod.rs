@@ -51,6 +51,7 @@ pub struct App {
     replying: Option<Message>,
     collapsed: HashSet<Id>,
     image_viewer: Option<String>,
+    unread_marker: Option<Id>,
     pending_token: Option<String>,
     ack_tokens: HashMap<Id, String>,
     last_ack: Option<Instant>,
@@ -95,6 +96,7 @@ impl App {
             replying: None,
             collapsed: HashSet::new(),
             image_viewer: None,
+            unread_marker: None,
             pending_token: None,
             ack_tokens: HashMap::new(),
             last_ack: None,
@@ -257,6 +259,11 @@ impl App {
             return;
         }
         self.selected_channel = Some(channel_id.clone());
+        self.unread_marker = self
+            .state
+            .read_states
+            .get(&channel_id)
+            .and_then(|read| read.last_message_id.clone());
         self.last_typing = None;
         if let Some(net) = &self.net {
             net.send(Command::LoadHistory {
