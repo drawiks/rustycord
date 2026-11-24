@@ -1,4 +1,5 @@
 use super::*;
+use chrono::{Datelike, TimeZone};
 
 pub(super) fn unread_dot() -> impl IntoElement {
     div().size(px(8.)).rounded(px(4.)).bg(rgb(0xf2f3f5))
@@ -131,4 +132,114 @@ pub(super) fn is_image(content_type: &Option<String>, filename: &str) -> bool {
         extension.to_ascii_lowercase().as_str(),
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "avif" | "bmp"
     )
+}
+
+pub(super) fn presence_dot(status: &str) -> impl IntoElement {
+    let color = match status {
+        "online" => ONLINE,
+        "idle" => IDLE,
+        "dnd" => DND,
+        _ => FAINT,
+    };
+    div()
+        .size(px(11.))
+        .rounded(px(6.))
+        .bg(rgb(color))
+        .border_2()
+        .border_color(rgb(SIDEBAR))
+}
+
+pub(super) fn user_avatar(
+    user: Option<&User>,
+    fallback_name: &str,
+    presence: &str,
+) -> impl IntoElement {
+    let visual = match user {
+        Some(user) => gpui_kit::img(avatar_url(user))
+            .size(px(32.))
+            .into_any_element(),
+        None => div()
+            .size(px(32.))
+            .rounded(px(16.))
+            .bg(rgb(ACCENT))
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_size(px(12.))
+            .font_weight(FontWeight::BOLD)
+            .text_color(rgb(0xffffff))
+            .child(initials(fallback_name))
+            .into_any_element(),
+    };
+
+    div()
+        .relative()
+        .flex_none()
+        .child(
+            div()
+                .size(px(32.))
+                .rounded(px(16.))
+                .overflow_hidden()
+                .child(visual),
+        )
+        .child(
+            div()
+                .absolute()
+                .bottom(px(-1.))
+                .right(px(-1.))
+                .child(presence_dot(presence)),
+        )
+}
+
+pub(super) fn dm_user(state: &State, channel: &Channel) -> Option<User> {
+    channel.recipients.first().cloned().or_else(|| {
+        channel
+            .recipient_ids
+            .iter()
+            .find_map(|id| state.user(id).cloned())
+    })
+}
+
+pub(super) fn snowflake_time(id: &str) -> Option<DateTime<Local>> {
+    let millis = (snowflake(id) >> 22) as i64 + 1_420_070_400_000;
+    Local.timestamp_millis_opt(millis).single()
+}
+
+pub(super) fn short_time(time: DateTime<Local>) -> String {
+    let now = Local::now();
+    if time.date_naive() == now.date_naive() {
+        time.format("%H:%M").to_string()
+    } else if time.date_naive().year() == now.date_naive().year() {
+        time.format("%d %b").to_string()
+    } else {
+        time.format("%d.%m.%y").to_string()
+    }
+}
+
+pub(super) fn empty_state(icon: IconName, title: &str, hint: &str) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap(px(8.))
+        .p(px(24.))
+        .child(
+            gpui_kit::component::Icon::new(icon)
+                .size(px(28.))
+                .text_color(rgb(FAINT)),
+        )
+        .child(
+            div()
+                .text_size(px(14.))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(rgb(MUTED))
+                .child(title.to_string()),
+        )
+        .child(
+            div()
+                .text_size(px(12.))
+                .text_color(rgb(FAINT))
+                .child(hint.to_string()),
+        )
 }

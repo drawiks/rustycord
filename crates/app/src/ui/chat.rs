@@ -18,13 +18,11 @@ impl App {
                         .flex_col()
                         .items_center()
                         .justify_center()
-                        .gap(px(6.))
-                        .child(
-                            div()
-                                .text_size(px(14.))
-                                .text_color(rgb(MUTED))
-                                .child("Select a channel"),
-                        )
+                        .child(empty_state(
+                            IconName::MessageSquare,
+                            "Select a channel",
+                            "Pick a channel from the sidebar to start reading",
+                        ))
                         .child(
                             div()
                                 .text_size(px(12.))
@@ -91,12 +89,11 @@ impl App {
             child_index += 1;
         }
         if messages.is_empty() {
-            list = list.child(
-                div()
-                    .text_size(px(13.))
-                    .text_color(rgb(FAINT))
-                    .child("No messages loaded"),
-            );
+            list = list.child(empty_state(
+                IconName::MessageSquare,
+                "No messages yet",
+                "Start the conversation",
+            ));
             child_index += 1;
         }
         let read_marker = self
@@ -244,11 +241,56 @@ impl App {
                     ),
             );
         }
-        composer_block =
-            composer_block.child(Textarea::new(&self.composer).appearance(true).h(px(72.)));
+        let draft = self.composer.read(cx).value().to_string();
+        let count = draft.chars().count();
+        let status_color = if count > 2000 { DANGER } else { MUTED };
+        if count > 1800 {
+            composer_block = composer_block.child(
+                div()
+                    .self_end()
+                    .text_size(px(11.))
+                    .text_color(rgb(status_color))
+                    .child(format!("{count}/2000")),
+            );
+        }
+        composer_block = composer_block.child(
+            div()
+                .flex()
+                .items_end()
+                .gap(px(8.))
+                .child(
+                    div()
+                        .flex_1()
+                        .rounded(px(8.))
+                        .bg(rgb(0x383a40))
+                        .px(px(12.))
+                        .py(px(4.))
+                        .child(
+                            Textarea::new(&self.composer)
+                                .appearance(false)
+                                .bordered(false)
+                                .h(px(40.)),
+                        ),
+                )
+                .child(
+                    div()
+                        .id("send-message")
+                        .size(px(40.))
+                        .rounded(px(20.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .bg(if count > 0 { rgb(ACCENT) } else { rgb(SIDEBAR) })
+                        .text_color(rgb(if count > 0 { 0xffffff } else { FAINT }))
+                        .cursor_pointer()
+                        .child(gpui_kit::component::Icon::new(IconName::Send).size(px(18.)))
+                        .on_click(cx.listener(|this, _, window, cx| this.send_message(window, cx))),
+                ),
+        );
 
         div()
             .flex_1()
+            .min_w(px(0.))
             .h_full()
             .flex()
             .flex_col()
@@ -268,36 +310,90 @@ impl App {
     }
 
     fn render_top_bar(&self, title: Option<String>) -> impl IntoElement {
+        let channel = self
+            .selected_channel
+            .as_ref()
+            .and_then(|id| self.state.channel(id));
+        let is_dm = channel.is_some_and(|channel| {
+            channel.kind == Channel::DM || channel.kind == Channel::GROUP_DM
+        });
+        let icon = if is_dm {
+            IconName::AtSign
+        } else {
+            IconName::Hash
+        };
+        let topic = channel.and_then(|channel| channel.topic.clone());
+        let status = if self.connection.starts_with("connected") {
+            "online"
+        } else if self.connection.starts_with("reconnecting") || self.connection == "connecting" {
+            "idle"
+        } else {
+            "offline"
+        };
+
         let mut bar = div()
+            .h(px(48.))
+            .flex_none()
             .flex()
             .items_center()
-            .justify_between()
+            .gap(px(8.))
             .px(px(16.))
-            .py(px(12.))
             .border_b(px(1.))
             .border_color(rgb(RAIL))
+            .child(
+                gpui_kit::component::Icon::new(icon)
+                    .size(px(20.))
+                    .text_color(rgb(ICON)),
+            )
             .child(
                 div()
                     .text_size(px(15.))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(rgb(0xf2f3f5))
-                    .truncate()
-                    .child(title.unwrap_or_else(|| "rustycord".to_string())),
-            )
-            .child(
+                    .text_color(rgb(TEXT_BRIGHT))
+                    .child(title.unwrap_or_default()),
+            );
+
+        if let Some(topic) = topic {
+            bar = bar.child(
                 div()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .truncate()
                     .text_size(px(12.))
                     .text_color(rgb(MUTED))
-                    .child(self.connection.clone()),
+                    .child(topic),
             );
+        } else {
+            bar = bar.child(div().flex_1());
+        }
+
+        bar = bar.child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .child(presence_dot(status))
+                .child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(rgb(MUTED))
+                        .child(self.connection.clone()),
+                ),
+        );
+
         if let Some(error) = &self.error {
             bar = bar.child(
                 div()
-                    .text_size(px(12.))
-                    .text_color(rgb(DANGER))
+                    .px(px(8.))
+                    .py(px(2.))
+                    .rounded(px(4.))
+                    .bg(rgb(DANGER))
+                    .text_size(px(11.))
+                    .text_color(rgb(0xffffff))
                     .child(error.clone()),
             );
         }
+
         bar
     }
 

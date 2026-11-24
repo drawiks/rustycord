@@ -5,7 +5,7 @@ mod sidebar;
 mod widgets;
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     time::{Duration, Instant},
 };
 
@@ -49,6 +49,7 @@ pub struct App {
     last_typing: Option<Instant>,
     editing: Option<(Id, Id)>,
     replying: Option<Message>,
+    collapsed: HashSet<Id>,
     pending_token: Option<String>,
     ack_tokens: HashMap<Id, String>,
     last_ack: Option<Instant>,
@@ -91,6 +92,7 @@ impl App {
             last_typing: None,
             editing: None,
             replying: None,
+            collapsed: HashSet::new(),
             pending_token: None,
             ack_tokens: HashMap::new(),
             last_ack: None,
@@ -380,6 +382,23 @@ impl App {
         cx.notify();
     }
 
+    fn logout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.net = None;
+        self.screen = Screen::Login;
+        self.state = State::default();
+        self.selected_guild = None;
+        self.selected_channel = None;
+        self.editing = None;
+        self.replying = None;
+        self.pending_token = None;
+        self.ack_tokens.clear();
+        self.last_ack = None;
+        self.composer
+            .update(cx, |composer, cx| composer.set_value("", window, cx));
+        delete_token();
+        cx.notify();
+    }
+
     fn open_target(
         &mut self,
         target: markdown::Target,
@@ -534,6 +553,12 @@ fn load_token() -> Option<String> {
         .ok()?
         .get_password()
         .ok()
+}
+
+fn delete_token() {
+    if let Ok(entry) = keyring::Entry::new("rustycord", "token") {
+        let _ = entry.delete_credential();
+    }
 }
 
 fn save_token(token: &str) {

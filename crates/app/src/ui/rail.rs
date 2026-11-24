@@ -15,40 +15,49 @@ impl App {
             .bg(rgb(RAIL));
 
         let dm_selected = self.selected_guild.is_none();
+        let (dm_unread, dm_mentions) = self
+            .state
+            .channels
+            .iter()
+            .filter(|channel| channel.kind == Channel::DM || channel.kind == Channel::GROUP_DM)
+            .fold((false, 0u32), |(unread, mentions), channel| {
+                let (channel_unread, channel_mentions) = self.channel_unread(channel);
+                (unread || channel_unread, mentions + channel_mentions)
+            });
+        let dm_visual = div()
+            .text_size(px(20.))
+            .font_weight(FontWeight::BOLD)
+            .text_color(rgb(0xffffff))
+            .child("@")
+            .into_any_element();
+        rail = rail.child(rail_button(
+            gpui_kit::SharedString::from("rail-dms"),
+            dm_selected,
+            dm_unread,
+            dm_mentions,
+            dm_visual,
+            cx.listener(|this, _, window, cx| {
+                this.select_guild(None, cx);
+                this.focus_composer(window, cx);
+            }),
+        ));
         rail = rail.child(
             div()
-                .id("rail-dms")
-                .size(px(48.))
-                .rounded(px(16.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .bg(if dm_selected {
-                    rgb(ACCENT)
-                } else {
-                    rgb(SIDEBAR)
-                })
-                .text_size(px(18.))
-                .font_weight(FontWeight::BOLD)
-                .text_color(rgb(0xffffff))
-                .cursor_pointer()
-                .child("@")
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.select_guild(None, cx);
-                    this.focus_composer(window, cx);
-                })),
+                .w(px(32.))
+                .h(px(2.))
+                .rounded(px(1.))
+                .bg(rgb(RAIL_HOVER)),
         );
 
-        let guilds: Vec<(String, String, Option<String>)> = self
+        let guilds: Vec<(Id, String, Option<String>)> = self
             .state
             .guilds
             .iter()
-            .map(|g| (g.id.clone(), g.name.clone(), g.icon.clone()))
+            .map(|guild| (guild.id.clone(), guild.name.clone(), guild.icon.clone()))
             .collect();
         for (id, name, icon) in guilds {
             let selected = self.selected_guild.as_ref() == Some(&id);
-            let element_id = gpui_kit::SharedString::from(format!("rail-{id}"));
-            let click_id = id.clone();
+            let (unread, mentions) = self.guild_unread(&id);
             let visual = match icon {
                 Some(icon) => gpui_kit::img(guild_icon_url(&id, &icon))
                     .size(px(48.))
@@ -60,42 +69,93 @@ impl App {
                     .child(initials(&name))
                     .into_any_element(),
             };
-            let (unread, mentions) = self.guild_unread(&id);
-            let mut button = div()
-                .id(element_id)
-                .relative()
-                .size(px(48.))
-                .rounded(px(16.))
-                .overflow_hidden()
-                .flex()
-                .items_center()
-                .justify_center()
-                .bg(if selected { rgb(ACCENT) } else { rgb(SIDEBAR) })
-                .cursor_pointer()
-                .child(visual);
-            if mentions > 0 {
-                button = button.child(
-                    div()
-                        .absolute()
-                        .bottom(px(0.))
-                        .right(px(0.))
-                        .child(mention_badge(mentions)),
-                );
-            } else if unread {
-                button = button.child(
-                    div()
-                        .absolute()
-                        .bottom(px(2.))
-                        .right(px(2.))
-                        .child(unread_dot()),
-                );
-            }
-            rail = rail.child(button.on_click(cx.listener(move |this, _, window, cx| {
-                this.select_guild(Some(click_id.clone()), cx);
-                this.focus_composer(window, cx);
-            })));
+            let click_id = id.clone();
+            rail = rail.child(rail_button(
+                gpui_kit::SharedString::from(format!("rail-{id}")),
+                selected,
+                unread,
+                mentions,
+                visual,
+                cx.listener(move |this, _, window, cx| {
+                    this.select_guild(Some(click_id.clone()), cx);
+                    this.focus_composer(window, cx);
+                }),
+            ));
         }
 
         rail
     }
+}
+
+fn rail_button<F>(
+    id: gpui_kit::SharedString,
+    selected: bool,
+    unread: bool,
+    mentions: u32,
+    visual: gpui_kit::AnyElement,
+    on_click: F,
+) -> impl IntoElement
+where
+    F: Fn(&gpui_kit::ClickEvent, &mut Window, &mut gpui_kit::App) + 'static,
+{
+    let pill_height = if selected {
+        px(28.)
+    } else if unread {
+        px(8.)
+    } else {
+        px(0.)
+    };
+
+    div()
+        .relative()
+        .w_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(
+            div()
+                .absolute()
+                .left(px(0.))
+                .w(px(4.))
+                .h(pill_height)
+                .rounded(px(2.))
+                .bg(rgb(0xffffff)),
+        )
+        .child(
+            div()
+                .id(id)
+                .relative()
+                .size(px(48.))
+                .cursor_pointer()
+                .child(
+                    div()
+                        .size(px(48.))
+                        .rounded(if selected { px(14.) } else { px(16.) })
+                        .overflow_hidden()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .bg(if selected { rgb(ACCENT) } else { rgb(SIDEBAR) })
+                        .hover(move |style| {
+                            style.bg(if selected {
+                                rgb(ACCENT)
+                            } else {
+                                rgb(RAIL_HOVER)
+                            })
+                        })
+                        .child(visual),
+                )
+                .children(if mentions > 0 {
+                    Some(
+                        div()
+                            .absolute()
+                            .bottom(px(-2.))
+                            .right(px(-2.))
+                            .child(mention_badge(mentions)),
+                    )
+                } else {
+                    None
+                })
+                .on_click(on_click),
+        )
 }
