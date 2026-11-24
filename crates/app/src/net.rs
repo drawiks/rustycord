@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use rustycord_discord::{Discord, Event, Message, User};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
@@ -32,6 +34,17 @@ pub enum Command {
         guild_id: String,
         channel_id: String,
     },
+    UploadFile {
+        channel_id: String,
+        path: PathBuf,
+        name: String,
+        content: String,
+    },
+    DownloadFile {
+        url: String,
+        dest: PathBuf,
+        name: String,
+    },
     React {
         channel_id: String,
         message_id: String,
@@ -55,6 +68,10 @@ pub enum UiEvent {
     AckToken {
         channel_id: String,
         token: String,
+    },
+    TransferDone {
+        note: Option<String>,
+        error: Option<String>,
     },
     Error(String),
 }
@@ -197,6 +214,47 @@ async fn handle(
             client.typing(&channel_id).await?;
         }
         Command::SubscribeMembers { .. } => {}
+        Command::UploadFile {
+            channel_id,
+            path,
+            name,
+            content,
+        } => match client.send_file(&channel_id, &content, &path).await {
+            Ok(_) => {
+                let _ = ui.send(UiEvent::TransferDone {
+                    note: Some(format!("Uploaded {name}")),
+                    error: None,
+                });
+            }
+            Err(error) => {
+                let _ = ui.send(UiEvent::TransferDone {
+                    note: None,
+                    error: Some(error.to_string()),
+                });
+            }
+        },
+        Command::DownloadFile { url, dest, name } => {
+            let result = match client.download(&url).await {
+                Ok(bytes) => tokio::fs::write(&dest, bytes)
+                    .await
+                    .map_err(|error| error.to_string()),
+                Err(error) => Err(error.to_string()),
+            };
+            match result {
+                Ok(()) => {
+                    let _ = ui.send(UiEvent::TransferDone {
+                        note: Some(format!("Saved {name}")),
+                        error: None,
+                    });
+                }
+                Err(error) => {
+                    let _ = ui.send(UiEvent::TransferDone {
+                        note: None,
+                        error: Some(error),
+                    });
+                }
+            }
+        }
         Command::React {
             channel_id,
             message_id,

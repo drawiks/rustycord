@@ -48,16 +48,22 @@ impl App {
             .get(&channel_id)
             .filter(|(_, at)| at.elapsed() < Duration::from_secs(8))
             .map(|(user_id, _)| user_id.clone());
-        let status = match &typing {
-            Some(user_id) => {
-                let name = self
-                    .state
-                    .user(user_id)
-                    .map(|user| user.display_name().to_string())
-                    .unwrap_or_else(|| "Someone".to_string());
-                format!("{name} is typing...")
+        let status = if self.transfers > 0 {
+            format!("Transferring {} file(s)…", self.transfers)
+        } else if let Some(notice) = &self.notice {
+            notice.clone()
+        } else {
+            match &typing {
+                Some(user_id) => {
+                    let name = self
+                        .state
+                        .user(user_id)
+                        .map(|user| user.display_name().to_string())
+                        .unwrap_or_else(|| "Someone".to_string());
+                    format!("{name} is typing...")
+                }
+                None => String::new(),
             }
-            None => String::new(),
         };
 
         let debug = debug_render();
@@ -100,6 +106,7 @@ impl App {
         );
 
         let composer = self.render_composer(cx);
+        let drop_entity = cx.entity().downgrade();
 
         if debug {
             tracing::info!(
@@ -110,12 +117,19 @@ impl App {
         }
 
         div()
+            .id("chat")
             .flex_1()
             .min_w(px(0.))
             .h_full()
             .flex()
             .flex_col()
             .bg(rgb(CHAT))
+            .on_drop::<gpui_kit::ExternalPaths>(move |paths, _window, cx| {
+                for path in paths.paths() {
+                    let path = path.clone();
+                    let _ = drop_entity.update(cx, |app, cx| app.enqueue_upload(path, cx));
+                }
+            })
             .child(header)
             .child(div().flex_1().min_h(px(0.)).child(scroller))
             .child(
@@ -303,20 +317,77 @@ impl App {
                         }),
                 );
             } else {
+                let file_name = attachment.filename.clone();
+                let file_url = attachment.url.clone();
+                let weak = entity.clone();
+                let download_name = file_name.clone();
                 content = content.child(
                     div()
                         .mt(px(4.))
+                        .max_w(px(420.))
                         .px(px(10.))
-                        .py(px(6.))
+                        .py(px(8.))
                         .rounded(px(6.))
                         .bg(rgb(SIDEBAR))
-                        .text_size(px(12.))
-                        .text_color(rgb(LINK))
-                        .child(format!(
-                            "[file] {} ({})",
-                            attachment.filename,
-                            format_bytes(attachment.size)
-                        )),
+                        .flex()
+                        .items_center()
+                        .gap(px(10.))
+                        .child(
+                            gpui_kit::component::Icon::new(IconName::FileText)
+                                .size(px(22.))
+                                .text_color(rgb(MUTED)),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .flex_1()
+                                .min_w(px(0.))
+                                .child(
+                                    div()
+                                        .text_size(px(13.))
+                                        .text_color(rgb(LINK))
+                                        .truncate()
+                                        .child(file_name),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(11.))
+                                        .text_color(rgb(FAINT))
+                                        .child(format_bytes(attachment.size)),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .id(gpui_kit::SharedString::from(format!(
+                                    "download-{}",
+                                    attachment.id
+                                )))
+                                .size(px(28.))
+                                .rounded(px(4.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .text_color(rgb(MUTED))
+                                .cursor_pointer()
+                                .hover(|style| {
+                                    style.bg(rgb(RAIL_HOVER)).text_color(rgb(TEXT_BRIGHT))
+                                })
+                                .child(
+                                    gpui_kit::component::Icon::new(IconName::Download)
+                                        .size(px(16.)),
+                                )
+                                .on_click(move |_, window, cx| {
+                                    let _ = weak.update(cx, |app, cx| {
+                                        app.pick_download(
+                                            file_url.clone(),
+                                            download_name.clone(),
+                                            cx,
+                                        )
+                                    });
+                                    let _ = window;
+                                }),
+                        ),
                 );
             }
         }
@@ -847,6 +918,20 @@ impl App {
                 .flex()
                 .items_end()
                 .gap(px(8.))
+                .child(
+                    div()
+                        .id("attach-file")
+                        .size(px(36.))
+                        .rounded(px(18.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_color(rgb(MUTED))
+                        .cursor_pointer()
+                        .hover(|style| style.bg(rgb(RAIL_HOVER)).text_color(rgb(TEXT_BRIGHT)))
+                        .child(gpui_kit::component::Icon::new(IconName::Paperclip).size(px(18.)))
+                        .on_click(cx.listener(|this, _, _window, cx| this.pick_files(cx))),
+                )
                 .child(
                     div()
                         .flex_1()

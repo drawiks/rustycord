@@ -328,6 +328,56 @@ impl Http {
         .await
     }
 
+    pub async fn send_file(
+        &self,
+        channel_id: &str,
+        content: &str,
+        path: &std::path::Path,
+    ) -> Result<Message> {
+        let key = format!("channel_send:{channel_id}");
+        self.inner.limits.acquire(&key, true).await;
+
+        let payload = json!({ "content": content, "tts": false }).to_string();
+        let form = wreq::multipart::Form::new()
+            .text("payload_json", payload)
+            .file("files[0]", path)
+            .await?;
+
+        let resp = self
+            .inner
+            .client
+            .post(format!("{BASE}/channels/{channel_id}/messages"))
+            .headers(self.headers())
+            .multipart(form)
+            .send()
+            .await?;
+        let status = resp.status().as_u16();
+        self.inner
+            .limits
+            .update(&key, resp.headers(), status == 429);
+        let text = resp.text().await?;
+        if status == 401 {
+            return Err(Error::Unauthorized);
+        }
+        if !(200..300).contains(&status) {
+            return Err(Error::Api { status, body: text });
+        }
+        Ok(serde_json::from_str(&text)?)
+    }
+
+    pub async fn download(&self, url: &str) -> Result<Vec<u8>> {
+        let resp = self.inner.client.get(url).send().await?;
+        let status = resp.status().as_u16();
+        let bytes = resp.bytes().await?;
+        if !(200..300).contains(&status) {
+            return Err(Error::Api {
+                status,
+                body: String::from_utf8_lossy(&bytes).into_owned(),
+            });
+        }
+        Ok(bytes.to_vec())
+    }
+
     pub async fn typing(&self, channel_id: &str) -> Result<()> {
         self.send(
             Method::POST,

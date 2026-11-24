@@ -19,7 +19,7 @@ mimalloc = { version = "0.1", default-features = false }
 keyring = "4"
 open = "5"
 rustycord-discord = { path = "../discord" }
-tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "fs"] }
 tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

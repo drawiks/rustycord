@@ -7,6 +7,7 @@ mod widgets;
 
 use std::{
     collections::{HashMap, HashSet},
+    path::PathBuf,
     time::{Duration, Instant},
 };
 
@@ -59,6 +60,8 @@ pub struct App {
     unread_marker: Option<Id>,
     right_pane: Option<RightPane>,
     member_rows: Vec<MemberRow>,
+    transfers: usize,
+    notice: Option<String>,
     pending_token: Option<String>,
     ack_tokens: HashMap<Id, String>,
     last_ack: Option<Instant>,
@@ -124,6 +127,8 @@ impl App {
             unread_marker: None,
             right_pane: None,
             member_rows: Vec::new(),
+            transfers: 0,
+            notice: None,
             pending_token: None,
             ack_tokens: HashMap::new(),
             last_ack: None,
@@ -178,6 +183,14 @@ impl App {
         match event {
             UiEvent::AckToken { channel_id, token } => {
                 self.ack_tokens.insert(channel_id, token);
+            }
+            UiEvent::TransferDone { note, error } => {
+                self.transfers = self.transfers.saturating_sub(1);
+                if let Some(error) = error {
+                    self.error = Some(error);
+                } else if let Some(note) = note {
+                    self.notice = Some(note);
+                }
             }
             UiEvent::LoggedIn => {
                 self.screen = Screen::Main;
@@ -422,6 +435,83 @@ impl App {
             read.id = channel_id.to_string();
             read.last_message_id = Some(message_id);
         }
+    }
+
+    fn pick_files(&mut self, cx: &mut Context<Self>) {
+        let receiver = cx.prompt_for_paths(gpui_kit::PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: true,
+            prompt: Some("Attach files".into()),
+        });
+        let entity = cx.entity().downgrade();
+        cx.spawn(async move |_, cx| {
+            if let Ok(Ok(Some(paths))) = receiver.await {
+                for path in paths {
+                    let _ = entity.update(cx, |app, cx| app.enqueue_upload(path, cx));
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn enqueue_upload(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        let Some(channel_id) = self.selected_channel.clone() else {
+            self.error = Some("Select a channel first".to_string());
+            cx.notify();
+            return;
+        };
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| "file".to_string());
+
+        match std::fs::metadata(&path) {
+            Ok(meta) if meta.len() > 10 * 1024 * 1024 => {
+                self.error = Some(format!("{name} exceeds the 10 MB upload limit"));
+            }
+            Ok(_) => {
+                if let Some(net) = &self.net {
+                    net.send(Command::UploadFile {
+                        channel_id,
+                        path,
+                        name: name.clone(),
+                        content: String::new(),
+                    });
+                    self.transfers += 1;
+                    self.notice = Some(format!("Uploading {name}…"));
+                }
+            }
+            Err(error) => self.error = Some(format!("Cannot read {name}: {error}")),
+        }
+        cx.notify();
+    }
+
+    fn pick_download(&mut self, url: String, name: String, cx: &mut Context<Self>) {
+        let directory = dirs::download_dir()
+            .or_else(dirs::home_dir)
+            .unwrap_or_else(|| PathBuf::from("."));
+        let receiver = cx.prompt_for_new_path(&directory, Some(&name));
+        let entity = cx.entity().downgrade();
+        cx.spawn(async move |_, cx| {
+            if let Ok(Ok(Some(dest))) = receiver.await {
+                let _ = entity.update(cx, |app, cx| app.start_download(url, dest, name, cx));
+            }
+        })
+        .detach();
+    }
+
+    fn start_download(&mut self, url: String, dest: PathBuf, name: String, cx: &mut Context<Self>) {
+        if let Some(net) = &self.net {
+            net.send(Command::DownloadFile {
+                url,
+                dest,
+                name: name.clone(),
+            });
+            self.transfers += 1;
+            self.notice = Some(format!("Downloading {name}…"));
+        }
+        cx.notify();
     }
 
     fn request_members(&self) {

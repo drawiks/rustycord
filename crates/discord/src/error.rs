@@ -16,6 +16,8 @@ pub enum Error {
     GatewayClosed(u16),
     #[error("gateway connect timeout")]
     GatewayTimeout,
+    #[error("io: {0}")]
+    Io(#[from] std::io::Error),
     #[error("{0}")]
     Other(String),
 }

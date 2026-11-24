@@ -86,6 +86,19 @@ impl Discord {
         self.http.ack(channel_id, message_id, token).await
     }
 
+    pub async fn send_file(
+        &self,
+        channel_id: &str,
+        content: &str,
+        path: &std::path::Path,
+    ) -> Result<Message> {
+        self.http.send_file(channel_id, content, path).await
+    }
+
+    pub async fn download(&self, url: &str) -> Result<Vec<u8>> {
+        self.http.download(url).await
+    }
+
     pub async fn typing(&self, channel_id: &str) -> Result<()> {
         self.http.typing(channel_id).await
     }
