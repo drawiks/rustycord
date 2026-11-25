@@ -60,7 +60,7 @@ pub enum Command {
 pub enum UiEvent {
     LoggedIn,
     LoginFailed(String),
-    Discord(Event),
+    Discord(Box<Event>),
     History {
         channel_id: String,
         messages: Vec<Message>,
@@ -121,11 +121,13 @@ async fn run(
                     .iter()
                     .flat_map(|channel| channel.recipients.iter().cloned())
                     .collect();
-                let _ = ui.send(UiEvent::Discord(Event::Users(users)));
-                let _ = ui.send(UiEvent::Discord(Event::PrivateChannels(channels)));
+                let _ = ui.send(UiEvent::Discord(Box::new(Event::Users(users))));
+                let _ = ui.send(UiEvent::Discord(Box::new(Event::PrivateChannels(channels))));
             }
             if let Ok(relationships) = client.relationships().await {
-                let _ = ui.send(UiEvent::Discord(Event::Relationships(relationships)));
+                let _ = ui.send(UiEvent::Discord(Box::new(Event::Relationships(
+                    relationships,
+                ))));
             }
         });
     }
@@ -136,7 +138,7 @@ async fn run(
     loop {
         tokio::select! {
             Some(event) = gateway_rx.recv() => {
-                let _ = ui.send(UiEvent::Discord(event));
+                let _ = ui.send(UiEvent::Discord(Box::new(event)));
             }
             Some(command) = commands.recv() => {
                 if let Command::SubscribeMembers {

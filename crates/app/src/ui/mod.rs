@@ -18,7 +18,9 @@ use gpui_kit::component::message_scroller::MessageScrollerState;
 use gpui_kit::{
     ClipboardItem, Focusable, FontWeight, Subscription, Window, div, prelude::*, px, rgb,
 };
-use rustycord_discord::{Channel, ConnectionState, Event, Id, Message, State, User, snowflake};
+use rustycord_discord::{
+    Channel, ConnectionState, Event, Id, Member, Message, Role, State, User, snowflake,
+};
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 
 use self::widgets::{day_label, parse_timestamp};
@@ -207,6 +209,7 @@ impl App {
                 self.error = Some(error);
             }
             UiEvent::Discord(event) => {
+                let event = *event;
                 if let Event::Connection(state) = &event {
                     self.connection = match state {
                         ConnectionState::Connected => "connected".to_string(),
@@ -264,6 +267,9 @@ impl App {
                 if members_changed && matches!(self.right_pane, Some(RightPane::Members)) {
                     self.sync_members();
                 }
+                if ready || members_changed {
+                    self.ensure_visible_selection(cx);
+                }
                 if ready && matches!(self.right_pane, Some(RightPane::Members)) {
                     self.request_members();
                 }
@@ -295,7 +301,12 @@ impl App {
         let guild = self.state.guilds.first().map(|g| g.id.clone());
         self.selected_guild = guild.clone();
         let channel = guild
-            .and_then(|id| self.state.text_channels(&id).first().map(|c| c.id.clone()))
+            .and_then(|id| {
+                self.state
+                    .visible_text_channels(&id)
+                    .first()
+                    .map(|c| c.id.clone())
+            })
             .or_else(|| self.state.channels.first().map(|c| c.id.clone()));
         if let Some(channel) = channel {
             self.select_channel(channel, cx);
@@ -314,7 +325,12 @@ impl App {
         self.selected_guild = guild.clone();
         let channel = guild
             .as_ref()
-            .and_then(|id| self.state.text_channels(id).first().map(|c| c.id.clone()))
+            .and_then(|id| {
+                self.state
+                    .visible_text_channels(id)
+                    .first()
+                    .map(|c| c.id.clone())
+            })
             .or_else(|| {
                 if guild.is_none() {
                     self.state.channels.first().map(|c| c.id.clone())
@@ -514,6 +530,36 @@ impl App {
         cx.notify();
     }
 
+    fn ensure_visible_selection(&mut self, cx: &mut Context<Self>) {
+        let Some(guild_id) = self.selected_guild.clone() else {
+            return;
+        };
+        let hidden = self
+            .selected_channel
+            .as_ref()
+            .and_then(|id| self.state.channel(id).map(|channel| (id.clone(), channel)))
+            .is_some_and(|(id, channel)| {
+                channel.guild_id.as_deref() == Some(guild_id.as_str())
+                    && channel.is_text()
+                    && !self.state.can_view(&guild_id, channel)
+                    && self.state.channel(&id).is_some()
+            });
+        if hidden {
+            match self
+                .state
+                .visible_text_channels(&guild_id)
+                .first()
+                .map(|channel| channel.id.clone())
+            {
+                Some(next) => self.select_channel(next, cx),
+                None => {
+                    self.selected_channel = None;
+                    cx.notify();
+                }
+            }
+        }
+    }
+
     fn request_members(&self) {
         let Some(guild_id) = self.selected_guild.clone() else {
             return;
@@ -529,7 +575,7 @@ impl App {
             })
             .or_else(|| {
                 self.state
-                    .text_channels(&guild_id)
+                    .visible_text_channels(&guild_id)
                     .first()
                     .map(|channel| channel.id.clone())
             });
@@ -546,46 +592,80 @@ impl App {
         let Some(guild_id) = self.selected_guild.clone() else {
             return;
         };
+        let Some(guild) = self.state.guild(&guild_id) else {
+            return;
+        };
 
-        let mut online: Vec<(i32, String, Id)> = Vec::new();
-        let mut offline: Vec<(String, Id)> = Vec::new();
-        for member in self.state.members(&guild_id) {
+        let mut online: Vec<(&Member, Option<&Role>, String)> = Vec::new();
+        let mut offline: Vec<String> = Vec::new();
+        let mut hoisted: Vec<&Role> = guild.roles.iter().filter(|role| role.hoist).collect();
+        hoisted.sort_by_key(|role| std::cmp::Reverse(role.position));
+
+        for member in &guild.members {
             let name = member.display_name().to_lowercase();
             if self.state.presence(member.id()) == "offline" {
-                offline.push((name, member.id().to_string()));
+                offline.push(member.id().to_string());
             } else {
-                let position = self
-                    .state
-                    .member_roles(&guild_id, member.id())
-                    .first()
-                    .map(|role| role.position)
-                    .unwrap_or(0);
-                online.push((position, name, member.user.id.clone()));
+                let role = self.state.member_top_hoisted_role(&guild_id, member.id());
+                online.push((member, role, name));
             }
         }
-        online.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-        offline.sort_by(|a, b| a.0.cmp(&b.0));
+        offline.sort_by_key(|id| {
+            self.state
+                .member_name(&guild_id, id)
+                .unwrap_or_default()
+                .to_lowercase()
+        });
 
-        if !online.is_empty() {
+        for role in hoisted {
+            let mut members: Vec<(&Member, String)> = online
+                .iter()
+                .filter(|(_, member_role, _)| member_role.is_some_and(|r| r.id == role.id))
+                .map(|(member, _, name)| (*member, name.clone()))
+                .collect();
+            if members.is_empty() {
+                continue;
+            }
+            members.sort_by(|a, b| a.1.cmp(&b.1));
             self.member_rows.push(MemberRow::Header {
-                label: "ONLINE",
-                count: online.len(),
+                label: role.name.clone(),
+                color: role.color,
+                count: members.len(),
             });
-            self.member_rows.extend(
-                online
-                    .into_iter()
-                    .map(|(_, _, user_id)| MemberRow::Member { user_id }),
-            );
+            self.member_rows
+                .extend(members.into_iter().map(|(member, _)| MemberRow::Member {
+                    user_id: member.id().to_string(),
+                }));
         }
+
+        let mut rest: Vec<(&Member, String)> = online
+            .into_iter()
+            .filter(|(_, role, _)| role.is_none())
+            .map(|(member, _, name)| (member, name))
+            .collect();
+        rest.sort_by(|a, b| a.1.cmp(&b.1));
+        if !rest.is_empty() {
+            self.member_rows.push(MemberRow::Header {
+                label: "В СЕТИ".to_string(),
+                color: 0x949ba4,
+                count: rest.len(),
+            });
+            self.member_rows
+                .extend(rest.into_iter().map(|(member, _)| MemberRow::Member {
+                    user_id: member.id().to_string(),
+                }));
+        }
+
         if !offline.is_empty() {
             self.member_rows.push(MemberRow::Header {
-                label: "OFFLINE",
+                label: "НЕ В СЕТИ".to_string(),
+                color: 0x6d6f78,
                 count: offline.len(),
             });
             self.member_rows.extend(
                 offline
                     .into_iter()
-                    .map(|(_, user_id)| MemberRow::Member { user_id }),
+                    .map(|user_id| MemberRow::Member { user_id }),
             );
         }
     }
@@ -1021,6 +1101,12 @@ pub(super) enum RightPane {
 
 #[derive(Clone, PartialEq, Eq)]
 pub(super) enum MemberRow {
-    Header { label: &'static str, count: usize },
-    Member { user_id: Id },
+    Header {
+        label: String,
+        color: u32,
+        count: usize,
+    },
+    Member {
+        user_id: Id,
+    },
 }

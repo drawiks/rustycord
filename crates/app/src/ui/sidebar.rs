@@ -1,6 +1,6 @@
 use super::widgets::*;
 use super::*;
-use gpui_kit::{Div, Stateful};
+use gpui_kit::{AnyElement, Div, Stateful};
 
 impl App {
     pub(super) fn render_sidebar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -73,9 +73,13 @@ impl App {
         };
         let channels = &guild.channels;
 
+        let visible_text = self.state.visible_text_channels(guild_id);
+        let visible_voice = self.state.visible_voice_channels(guild_id);
+        let visible: Vec<&Channel> = visible_text.into_iter().chain(visible_voice).collect();
+
         let mut categories: Vec<&Channel> = channels
             .iter()
-            .filter(|channel| channel.kind == Channel::CATEGORY)
+            .filter(|channel| channel.is_category())
             .collect();
         categories.sort_by_key(|category| category.position);
         let category_ids: HashSet<&str> = categories
@@ -83,14 +87,14 @@ impl App {
             .map(|category| category.id.as_str())
             .collect();
 
-        let mut loose: Vec<&Channel> = channels
+        let mut loose: Vec<&Channel> = visible
             .iter()
+            .copied()
             .filter(|channel| {
-                channel.is_text()
-                    && channel
-                        .parent_id
-                        .as_deref()
-                        .is_none_or(|parent| !category_ids.contains(parent))
+                channel
+                    .parent_id
+                    .as_deref()
+                    .is_none_or(|parent| !category_ids.contains(parent))
             })
             .collect();
         loose.sort_by_key(|channel| channel.position);
@@ -98,21 +102,20 @@ impl App {
         if loose.is_empty() && categories.is_empty() {
             list = list.child(empty_state(
                 IconName::Hash,
-                "No channels",
-                "This server has no text channels yet",
+                "Нет каналов",
+                "На этом сервере нет доступных каналов",
             ));
         }
 
         for channel in loose {
-            list = list.child(self.channel_row(channel, 0, cx));
+            list = list.child(self.channel_entry(channel, 0, cx));
         }
 
         for category in categories {
-            let mut children: Vec<&Channel> = channels
+            let mut children: Vec<&Channel> = visible
                 .iter()
-                .filter(|channel| {
-                    channel.parent_id.as_deref() == Some(category.id.as_str()) && channel.is_text()
-                })
+                .copied()
+                .filter(|channel| channel.parent_id.as_deref() == Some(category.id.as_str()))
                 .collect();
             if children.is_empty() {
                 continue;
@@ -124,11 +127,116 @@ impl App {
                 continue;
             }
             for channel in children {
-                list = list.child(self.channel_row(channel, 1, cx));
+                list = list.child(self.channel_entry(channel, 1, cx));
             }
         }
 
         list
+    }
+
+    fn channel_entry(&self, channel: &Channel, depth: usize, cx: &mut Context<Self>) -> AnyElement {
+        if channel.is_voice() {
+            self.voice_entry(channel, depth, cx)
+        } else {
+            self.channel_row(channel, depth, cx).into_any_element()
+        }
+    }
+
+    fn voice_entry(&self, channel: &Channel, depth: usize, cx: &mut Context<Self>) -> AnyElement {
+        let Some(guild_id) = channel
+            .guild_id
+            .clone()
+            .or_else(|| self.selected_guild.clone())
+        else {
+            return div().into_any_element();
+        };
+        let name = channel.display_name();
+        let members = self.state.voice_members(&guild_id, &channel.id);
+        let count = members.len();
+        let count_label = if count == 0 {
+            String::new()
+        } else if channel.user_limit > 0 {
+            format!("{count} / {}", channel.user_limit)
+        } else {
+            count.to_string()
+        };
+        let notice = "Голосовые каналы пока не поддерживаются".to_string();
+
+        let mut column = div().flex().flex_col().child(
+            div()
+                .id(gpui_kit::SharedString::from(format!(
+                    "voice-{}",
+                    channel.id
+                )))
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .h(px(30.))
+                .pl(px(8. + depth as f32 * 10.))
+                .pr(px(8.))
+                .rounded(px(4.))
+                .text_size(px(15.))
+                .text_color(rgb(MUTED))
+                .cursor_pointer()
+                .hover(|style| style.bg(rgb(RAIL_HOVER)))
+                .child(
+                    gpui_kit::component::Icon::new(IconName::Volume2)
+                        .size(px(18.))
+                        .text_color(rgb(ICON)),
+                )
+                .child(div().flex_1().truncate().child(name))
+                .child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(rgb(FAINT))
+                        .child(count_label),
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.notice = Some(notice.clone());
+                    cx.notify();
+                })),
+        );
+
+        for (user, state) in members {
+            let user_name = self
+                .state
+                .member_name(&guild_id, &user.id)
+                .map(str::to_string)
+                .unwrap_or_else(|| user.display_name().to_string());
+            let presence = self.state.presence(&user.id).to_string();
+            let streaming = state.self_stream;
+            let mut entry = div()
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .h(px(30.))
+                .pl(px(28. + depth as f32 * 10.))
+                .pr(px(8.))
+                .child(mini_avatar(Some(user), &user_name, &presence))
+                .child(
+                    div()
+                        .flex_1()
+                        .truncate()
+                        .text_size(px(13.))
+                        .text_color(rgb(TEXT))
+                        .child(user_name),
+                );
+            if streaming {
+                entry = entry.child(
+                    div()
+                        .px(px(4.))
+                        .rounded(px(3.))
+                        .bg(rgb(0x8b5cf6))
+                        .text_size(px(9.))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(rgb(0xffffff))
+                        .child("В ЭФИРЕ"),
+                );
+            }
+            column = column.child(entry);
+        }
+
+        column.into_any_element()
     }
 
     fn category_row(

@@ -191,6 +191,48 @@ pub(super) fn user_avatar(
         )
 }
 
+pub(super) fn mini_avatar(
+    user: Option<&User>,
+    fallback_name: &str,
+    presence: &str,
+) -> impl IntoElement {
+    let visual = match user {
+        Some(user) => gpui_kit::img(avatar_url(user))
+            .size(px(24.))
+            .into_any_element(),
+        None => div()
+            .size(px(24.))
+            .rounded(px(12.))
+            .bg(rgb(ACCENT))
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_size(px(10.))
+            .font_weight(FontWeight::BOLD)
+            .text_color(rgb(0xffffff))
+            .child(initials(fallback_name))
+            .into_any_element(),
+    };
+
+    div()
+        .relative()
+        .flex_none()
+        .child(
+            div()
+                .size(px(24.))
+                .rounded(px(12.))
+                .overflow_hidden()
+                .child(visual),
+        )
+        .child(
+            div()
+                .absolute()
+                .bottom(px(-1.))
+                .right(px(-1.))
+                .child(presence_dot(presence)),
+        )
+}
+
 pub(super) fn large_avatar(
     user: Option<&User>,
     fallback_name: &str,

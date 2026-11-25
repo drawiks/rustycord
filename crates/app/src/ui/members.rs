@@ -25,13 +25,6 @@ impl App {
     }
 
     fn render_members_panel(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let title = self
-            .selected_guild
-            .as_ref()
-            .and_then(|id| self.state.guild(id))
-            .map(|guild| format!("{} — {}", guild.name, self.state.members(&guild.id).len()))
-            .unwrap_or_else(|| "Members".to_string());
-
         let weak = cx.entity().downgrade();
         let list = gpui_kit::uniform_list(
             "members-list",
@@ -52,42 +45,6 @@ impl App {
             .flex_col()
             .flex_1()
             .min_h(px(0.))
-            .child(
-                div()
-                    .h(px(48.))
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .px(px(12.))
-                    .border_b(px(1.))
-                    .border_color(rgb(RAIL))
-                    .child(
-                        div()
-                            .text_size(px(13.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(rgb(TEXT_BRIGHT))
-                            .truncate()
-                            .child(title),
-                    )
-                    .child(
-                        div()
-                            .id("close-members")
-                            .size(px(24.))
-                            .rounded(px(4.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .text_color(rgb(MUTED))
-                            .cursor_pointer()
-                            .hover(|style| style.bg(rgb(RAIL_HOVER)).text_color(rgb(TEXT_BRIGHT)))
-                            .child(gpui_kit::component::Icon::new(IconName::X).size(px(14.)))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.right_pane = None;
-                                cx.notify();
-                            })),
-                    ),
-            )
             .child(div().flex_1().min_h(px(0.)).child(list))
     }
 
@@ -97,15 +54,19 @@ impl App {
         };
 
         match row {
-            MemberRow::Header { label, count } => div()
-                .h(px(44.))
+            MemberRow::Header {
+                label,
+                color,
+                count,
+            } => div()
+                .h(px(48.))
                 .flex()
                 .items_end()
                 .pb(px(6.))
                 .px(px(12.))
-                .text_size(px(11.))
+                .text_size(px(12.))
                 .font_weight(FontWeight::SEMIBOLD)
-                .text_color(rgb(MUTED))
+                .text_color(rgb(if *color == 0 { MUTED } else { *color }))
                 .child(format!("{label} — {count}"))
                 .into_any_element(),
             MemberRow::Member { user_id } => {
@@ -123,14 +84,92 @@ impl App {
                 let color = self.state.member_role_color(&guild_id, user_id);
                 let color = if color == 0 { TEXT } else { color };
                 let status = self.state.presence(user_id).to_string();
+                let avatar_name = name.clone();
+                let offline = status == "offline";
+                let activity = self.state.presence_detail(user_id);
+                let streaming = self.state.presence_streaming(user_id);
                 let owner = self.state.is_guild_owner(&guild_id, user_id);
+                let clan_tag = user
+                    .clan
+                    .as_ref()
+                    .or(user.primary_guild.as_ref())
+                    .and_then(|clan| clan.tag.clone())
+                    .filter(|tag| !tag.is_empty());
                 let weak = entity.clone();
                 let click_id = user_id.clone();
                 let click_guild = guild_id.clone();
 
+                let mut name_line = div().flex().items_center().gap(px(4.)).child(
+                    div()
+                        .text_size(px(15.))
+                        .truncate()
+                        .text_color(rgb(color))
+                        .child(name),
+                );
+
+                if user.bot {
+                    name_line = name_line.child(
+                        div()
+                            .px(px(4.))
+                            .rounded(px(3.))
+                            .bg(rgb(ACCENT))
+                            .text_size(px(9.))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(rgb(0xffffff))
+                            .child("BOT"),
+                    );
+                }
+                if let Some(tag) = clan_tag {
+                    name_line = name_line.child(
+                        div()
+                            .px(px(4.))
+                            .rounded(px(3.))
+                            .bg(rgb(0x3c4270))
+                            .text_size(px(9.))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(rgb(0xc9cdfb))
+                            .child(tag),
+                    );
+                }
+                if owner {
+                    name_line = name_line.child(
+                        gpui_kit::component::Icon::new(IconName::Crown)
+                            .size(px(12.))
+                            .text_color(rgb(IDLE)),
+                    );
+                }
+                if streaming {
+                    name_line = name_line.child(
+                        div()
+                            .px(px(4.))
+                            .rounded(px(3.))
+                            .bg(rgb(0x8b5cf6))
+                            .text_size(px(9.))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(rgb(0xffffff))
+                            .child("LIVE"),
+                    );
+                }
+
+                let mut member_column = div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .child(name_line);
+                if let Some(activity) = activity {
+                    member_column = member_column.child(
+                        div()
+                            .text_size(px(12.))
+                            .truncate()
+                            .text_color(rgb(MUTED))
+                            .child(activity),
+                    );
+                }
+
                 let mut row = div()
                     .id(gpui_kit::SharedString::from(format!("member-{user_id}")))
-                    .h(px(44.))
+                    .h(px(48.))
                     .mx(px(4.))
                     .px(px(8.))
                     .flex()
@@ -139,29 +178,11 @@ impl App {
                     .rounded(px(4.))
                     .cursor_pointer()
                     .hover(|style| style.bg(rgb(RAIL_HOVER)))
-                    .child(user_avatar(Some(user), &name, &status))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(4.))
-                            .flex_1()
-                            .min_w(px(0.))
-                            .child(
-                                div()
-                                    .text_size(px(14.))
-                                    .truncate()
-                                    .text_color(rgb(color))
-                                    .child(name),
-                            ),
-                    );
+                    .child(user_avatar(Some(user), &avatar_name, &status))
+                    .child(member_column);
 
-                if owner {
-                    row = row.child(
-                        gpui_kit::component::Icon::new(IconName::Crown)
-                            .size(px(12.))
-                            .text_color(rgb(IDLE)),
-                    );
+                if offline {
+                    row = row.opacity(0.35);
                 }
 
                 row.on_click(move |_, _, cx| {
