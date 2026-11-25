@@ -20,8 +20,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("logged in as {} ({})", me.display_name(), me.id);
 
     let (tx, mut rx) = mpsc::channel(1024);
-    let _gateway = client.spawn_gateway(tx);
+    let gateway = client.spawn_gateway(tx);
     let mut state = State::default();
+    let fetch_members = std::env::var_os("RUSTYCORD_MEMBERS").is_some();
 
     loop {
         let event = tokio::select! {
@@ -32,6 +33,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         match &event {
             Event::Ready(_) => {
+                if fetch_members {
+                    for guild in &state.guilds {
+                        for channel in guild
+                            .channels
+                            .iter()
+                            .filter(|channel| channel.is_text())
+                            .take(5)
+                        {
+                            gateway.subscribe_members(&guild.id, &channel.id);
+                        }
+                    }
+                }
                 println!(
                     "ready: {} guilds, {} private channels, {} users cached",
                     state.guilds.len(),

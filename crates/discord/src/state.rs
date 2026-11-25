@@ -3,8 +3,8 @@ use std::{collections::HashMap, time::Instant};
 use crate::{
     events::Event,
     models::{
-        Channel, Guild, Id, Member, Message, Reaction, ReadState, Relationship, Role, User,
-        snowflake,
+        Activity, Channel, Guild, Id, Member, Message, Presence, Reaction, ReadState, Relationship,
+        Role, User, VoiceState, snowflake,
     },
 };
 
@@ -20,7 +20,7 @@ pub struct State {
     pub read_states: HashMap<Id, ReadState>,
     pub messages: HashMap<Id, Vec<Message>>,
     pub typing: HashMap<Id, (Id, Instant)>,
-    pub presences: HashMap<Id, String>,
+    pub presences: HashMap<Id, Presence>,
 }
 
 impl State {
@@ -48,7 +48,14 @@ impl State {
                 if let Some(me) = &self.me
                     && !self.presences.contains_key(&me.id)
                 {
-                    self.presences.insert(me.id.clone(), "online".to_string());
+                    self.presences.insert(
+                        me.id.clone(),
+                        Presence {
+                            user: me.clone(),
+                            status: "online".to_string(),
+                            ..Default::default()
+                        },
+                    );
                 }
                 self.guilds = ready.guilds.clone();
                 self.channels = ready.private_channels.clone();
@@ -90,6 +97,16 @@ impl State {
             Event::MemberRemove { guild_id, user_id } => {
                 if let Some(guild) = self.guilds.iter_mut().find(|guild| &guild.id == guild_id) {
                     guild.members.retain(|member| member.id() != user_id);
+                }
+            }
+            Event::VoiceStateUpdate { guild_id, state } => {
+                if let Some(guild) = self.guilds.iter_mut().find(|guild| &guild.id == guild_id) {
+                    guild
+                        .voice_states
+                        .retain(|existing| existing.user_id != state.user_id);
+                    if state.channel_id.is_some() {
+                        guild.voice_states.push((**state).clone());
+                    }
                 }
             }
             Event::GuildRemove { id, unavailable } => {
@@ -251,11 +268,152 @@ impl State {
     pub fn presence(&self, id: &str) -> &str {
         self.presences
             .get(id)
-            .map(String::as_str)
+            .map(|presence| presence.status.as_str())
+            .filter(|status| !status.is_empty())
             .unwrap_or("offline")
     }
 
-    fn apply_presence(&mut self, presence: &crate::models::Presence) {
+    pub fn presence_detail(&self, id: &str) -> Option<String> {
+        let presence = self.presences.get(id)?;
+        for activity in &presence.activities {
+            if let Some(text) = activity.custom_status()
+                && !text.is_empty()
+            {
+                return Some(text.to_string());
+            }
+        }
+        for activity in &presence.activities {
+            if activity.kind == Activity::CUSTOM || activity.name.is_empty() {
+                continue;
+            }
+            let mut label = activity.name.clone();
+            if let Some(details) = &activity.details {
+                label.push_str(": ");
+                label.push_str(details);
+            }
+            return Some(label);
+        }
+        None
+    }
+
+    pub fn presence_streaming(&self, id: &str) -> bool {
+        self.presences.get(id).is_some_and(|presence| {
+            presence
+                .activities
+                .iter()
+                .any(|activity| activity.kind == 1)
+        })
+    }
+
+    pub fn member_top_role(&self, guild_id: &str, user_id: &str) -> Option<&Role> {
+        let guild = self.guild(guild_id)?;
+        let member = guild.members.iter().find(|member| member.id() == user_id)?;
+        member
+            .roles
+            .iter()
+            .filter_map(|id| guild.roles.iter().find(|role| &role.id == id))
+            .max_by_key(|role| role.position)
+    }
+
+    pub fn member_top_hoisted_role(&self, guild_id: &str, user_id: &str) -> Option<&Role> {
+        self.member_top_role(guild_id, user_id)
+            .filter(|role| role.hoist)
+    }
+
+    pub fn can_view(&self, guild_id: &str, channel: &Channel) -> bool {
+        let Some(guild) = self.guild(guild_id) else {
+            return true;
+        };
+        let Some(me) = &self.me else {
+            return true;
+        };
+        let Some(member) = guild.members.iter().find(|member| member.id() == me.id) else {
+            return true;
+        };
+        crate::permissions::can(
+            crate::permissions::channel_permissions(guild, member, channel),
+            crate::permissions::VIEW_CHANNEL,
+        )
+    }
+
+    pub fn can_send(&self, guild_id: &str, channel: &Channel) -> bool {
+        let Some(guild) = self.guild(guild_id) else {
+            return true;
+        };
+        let Some(me) = &self.me else {
+            return true;
+        };
+        let Some(member) = guild.members.iter().find(|member| member.id() == me.id) else {
+            return true;
+        };
+        crate::permissions::can(
+            crate::permissions::channel_permissions(guild, member, channel),
+            crate::permissions::SEND_MESSAGES,
+        )
+    }
+
+    pub fn can_read_history(&self, guild_id: &str, channel: &Channel) -> bool {
+        let Some(guild) = self.guild(guild_id) else {
+            return true;
+        };
+        let Some(me) = &self.me else {
+            return true;
+        };
+        let Some(member) = guild.members.iter().find(|member| member.id() == me.id) else {
+            return true;
+        };
+        crate::permissions::can(
+            crate::permissions::channel_permissions(guild, member, channel),
+            crate::permissions::READ_MESSAGE_HISTORY,
+        )
+    }
+
+    pub fn visible_text_channels(&self, guild_id: &str) -> Vec<&Channel> {
+        let Some(guild) = self.guild(guild_id) else {
+            return Vec::new();
+        };
+        let mut channels: Vec<&Channel> = guild
+            .channels
+            .iter()
+            .filter(|channel| channel.is_text() && self.can_view(guild_id, channel))
+            .collect();
+        channels.sort_by_key(|channel| channel.position);
+        channels
+    }
+
+    pub fn visible_voice_channels(&self, guild_id: &str) -> Vec<&Channel> {
+        let Some(guild) = self.guild(guild_id) else {
+            return Vec::new();
+        };
+        let mut channels: Vec<&Channel> = guild
+            .channels
+            .iter()
+            .filter(|channel| channel.is_voice() && self.can_view(guild_id, channel))
+            .collect();
+        channels.sort_by_key(|channel| channel.position);
+        channels
+    }
+
+    pub fn voice_members(&self, guild_id: &str, channel_id: &str) -> Vec<(&User, &VoiceState)> {
+        let Some(guild) = self.guild(guild_id) else {
+            return Vec::new();
+        };
+        guild
+            .voice_states
+            .iter()
+            .filter(|state| state.channel_id.as_deref() == Some(channel_id))
+            .filter_map(|state| {
+                self.user(&state.user_id)
+                    .or_else(|| {
+                        self.member(guild_id, &state.user_id)
+                            .map(|member| &member.user)
+                    })
+                    .map(|user| (user, state))
+            })
+            .collect()
+    }
+
+    fn apply_presence(&mut self, presence: &Presence) {
         let id = presence
             .user_id
             .clone()
@@ -263,12 +421,16 @@ impl State {
         let Some(id) = id else {
             return;
         };
-        if !presence.user.id.is_empty() {
-            self.remember_user(&presence.user);
+        let mut stored = presence.clone();
+        if stored.user.id.is_empty() {
+            if let Some(user) = self.users.get(&id).cloned() {
+                stored.user = user;
+            } else {
+                stored.user.id = id.clone();
+            }
         }
-        if !presence.status.is_empty() {
-            self.presences.insert(id, presence.status.clone());
-        }
+        self.remember_user(&stored.user);
+        self.presences.insert(id, stored);
     }
 
     fn resolve_member(&self, mut member: Member) -> Member {
@@ -448,6 +610,9 @@ impl State {
             if !guild.members.is_empty() {
                 existing.members = guild.members;
             }
+            if !guild.voice_states.is_empty() {
+                existing.voice_states = guild.voice_states;
+            }
             existing.member_count = guild.member_count;
             existing.unavailable = guild.unavailable;
         } else {
@@ -579,6 +744,7 @@ mod tests {
                 name: "Red".to_string(),
                 color: 0xff0000,
                 position: 2,
+                ..Default::default()
             }],
             members: vec![Member {
                 user: User {
@@ -613,6 +779,7 @@ mod tests {
             },
             user_id: None,
             status: "idle".to_string(),
+            ..Default::default()
         })));
         assert_eq!(state.presence("7"), "idle");
         assert_eq!(state.presence("unknown"), "offline");

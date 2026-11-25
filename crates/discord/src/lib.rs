@@ -3,6 +3,7 @@ mod events;
 mod fingerprint;
 mod gateway;
 mod models;
+mod permissions;
 mod rest;
 mod state;
 

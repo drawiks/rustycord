@@ -22,7 +22,7 @@ use crate::{
     fingerprint::Fingerprint,
     models::{
         Channel, Emoji, Guild, Member, Message as DiscordMessage, Presence, Ready,
-        ReadySupplemental, Relationship, User,
+        ReadySupplemental, Relationship, User, VoiceState,
     },
 };
 
@@ -467,6 +467,17 @@ async fn dispatch(name: &str, data: &Value, tx: &mpsc::Sender<Event>) {
             parse::<Presence>(name, data).map(|p| Event::PresenceUpdate(Box::new(p)))
         }
         "GUILD_MEMBER_ADD" | "GUILD_MEMBER_UPDATE" => member_event(data),
+        "VOICE_STATE_UPDATE" => match data["guild_id"].as_str() {
+            Some(guild_id) => {
+                serde_json::from_value::<VoiceState>(data.clone())
+                    .ok()
+                    .map(|state| Event::VoiceStateUpdate {
+                        guild_id: guild_id.to_string(),
+                        state: Box::new(state),
+                    })
+            }
+            None => None,
+        },
         "GUILD_MEMBER_LIST_UPDATE" => member_list_event(data),
         "GUILD_MEMBERS_CHUNK" => match data["guild_id"].as_str() {
             Some(guild_id) => serde_json::from_value::<Vec<Member>>(data["members"].clone())

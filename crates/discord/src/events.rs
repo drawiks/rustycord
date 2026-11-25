@@ -1,8 +1,9 @@
 use crate::models::{
-    Channel, Emoji, Guild, Id, Member, Message, Presence, Ready, Relationship, User,
+    Channel, Emoji, Guild, Id, Member, Message, Presence, Ready, Relationship, User, VoiceState,
 };
 
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum Event {
     Ready(Box<Ready>),
     GuildCreate(Box<Guild>),
@@ -64,6 +65,10 @@ pub enum Event {
     MemberChunk {
         guild_id: Id,
         members: Vec<Member>,
+    },
+    VoiceStateUpdate {
+        guild_id: Id,
+        state: Box<VoiceState>,
     },
     UserUpdate(Box<User>),
     Connection(ConnectionState),

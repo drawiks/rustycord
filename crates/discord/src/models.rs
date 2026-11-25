@@ -52,6 +52,32 @@ pub struct User {
     pub avatar: Option<String>,
     #[serde(default)]
     pub bot: bool,
+    #[serde(default)]
+    pub clan: Option<Clan>,
+    #[serde(default)]
+    pub primary_guild: Option<Clan>,
+    #[serde(default)]
+    pub avatar_decoration_data: Option<AvatarDecoration>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Clan {
+    #[serde(default)]
+    pub tag: Option<String>,
+    #[serde(default)]
+    pub badge: Option<String>,
+    #[serde(default)]
+    pub identity_guild_id: Option<Id>,
+    #[serde(default)]
+    pub identity_enabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct AvatarDecoration {
+    #[serde(default)]
+    pub asset: String,
+    #[serde(default)]
+    pub sku_id: String,
 }
 
 impl User {
@@ -68,6 +94,51 @@ pub struct Role {
     pub color: u32,
     #[serde(default)]
     pub position: i32,
+    #[serde(default)]
+    pub permissions: String,
+    #[serde(default)]
+    pub hoist: bool,
+    #[serde(default)]
+    pub managed: bool,
+    #[serde(default)]
+    pub icon: Option<String>,
+    #[serde(default)]
+    pub unicode_emoji: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct PermissionOverwrite {
+    pub id: Id,
+    #[serde(rename = "type", default)]
+    pub kind: u8,
+    #[serde(default)]
+    pub allow: String,
+    #[serde(default)]
+    pub deny: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct VoiceState {
+    #[serde(default)]
+    pub user_id: Id,
+    #[serde(default)]
+    pub channel_id: Option<Id>,
+    #[serde(default)]
+    pub session_id: String,
+    #[serde(default)]
+    pub deaf: bool,
+    #[serde(default)]
+    pub mute: bool,
+    #[serde(default)]
+    pub self_deaf: bool,
+    #[serde(default)]
+    pub self_mute: bool,
+    #[serde(default)]
+    pub self_stream: bool,
+    #[serde(default)]
+    pub self_video: bool,
+    #[serde(default)]
+    pub suppress: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -118,6 +189,8 @@ pub struct Guild {
     pub members: Vec<Member>,
     #[serde(default, deserialize_with = "null_default")]
     pub presences: Vec<Presence>,
+    #[serde(default, deserialize_with = "null_default")]
+    pub voice_states: Vec<VoiceState>,
     #[serde(default)]
     pub unavailable: bool,
 }
@@ -145,6 +218,10 @@ pub struct Channel {
     pub recipients: Vec<User>,
     #[serde(default)]
     pub recipient_ids: Vec<Id>,
+    #[serde(default, deserialize_with = "null_default")]
+    pub permission_overwrites: Vec<PermissionOverwrite>,
+    #[serde(default)]
+    pub user_limit: u32,
 }
 
 impl Channel {
@@ -158,6 +235,14 @@ impl Channel {
     pub fn is_text(&self) -> bool {
         matches!(self.kind, 0 | 1 | 3 | 5 | 10 | 11 | 12 | 13 | 14 | 15 | 16)
             && self.kind != Self::CATEGORY
+    }
+
+    pub fn is_voice(&self) -> bool {
+        self.kind == Self::VOICE
+    }
+
+    pub fn is_category(&self) -> bool {
+        self.kind == Self::CATEGORY
     }
 
     pub fn display_name(&self) -> String {
@@ -378,6 +463,55 @@ pub struct ReadySupplemental {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
+pub struct ActivityAssets {
+    #[serde(default)]
+    pub large_image: Option<String>,
+    #[serde(default)]
+    pub small_image: Option<String>,
+    #[serde(default)]
+    pub large_text: Option<String>,
+    #[serde(default)]
+    pub small_text: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Activity {
+    #[serde(rename = "type", default)]
+    pub kind: u8,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub details: Option<String>,
+    #[serde(default)]
+    pub state: Option<String>,
+    #[serde(default)]
+    pub emoji: Option<Emoji>,
+    #[serde(default)]
+    pub assets: Option<ActivityAssets>,
+    #[serde(default)]
+    pub application_id: Option<Id>,
+}
+
+impl Activity {
+    pub const CUSTOM: u8 = 4;
+
+    pub fn custom_status(&self) -> Option<&str> {
+        if self.kind == Self::CUSTOM {
+            self.state.as_deref()
+        } else {
+            None
+        }
+    }
+
+    pub fn label(&self) -> String {
+        match self.custom_status() {
+            Some(text) if !text.is_empty() => text.to_string(),
+            _ => self.name.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct Presence {
     #[serde(default)]
     pub user: User,
@@ -385,6 +519,8 @@ pub struct Presence {
     pub user_id: Option<Id>,
     #[serde(default)]
     pub status: String,
+    #[serde(default, deserialize_with = "null_default")]
+    pub activities: Vec<Activity>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
