@@ -224,7 +224,7 @@ async fn handle(
         } => match client.send_file(&channel_id, &content, &path).await {
             Ok(_) => {
                 let _ = ui.send(UiEvent::TransferDone {
-                    note: Some(format!("Uploaded {name}")),
+                    note: Some(format!("Загружено: {name}")),
                     error: None,
                 });
             }
@@ -245,7 +245,7 @@ async fn handle(
             match result {
                 Ok(()) => {
                     let _ = ui.send(UiEvent::TransferDone {
-                        note: Some(format!("Saved {name}")),
+                        note: Some(format!("Сохранено: {name}")),
                         error: None,
                     });
                 }

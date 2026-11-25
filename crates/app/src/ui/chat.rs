@@ -22,8 +22,8 @@ impl App {
                         .justify_center()
                         .child(empty_state(
                             IconName::MessageSquare,
-                            "Select a channel",
-                            "Pick a channel from the sidebar to start reading",
+                            "Выберите канал",
+                            "Выберите канал в списке слева, чтобы начать читать",
                         ))
                         .child(
                             div()
@@ -49,7 +49,7 @@ impl App {
             .filter(|(_, at)| at.elapsed() < Duration::from_secs(8))
             .map(|(user_id, _)| user_id.clone());
         let status = if self.transfers > 0 {
-            format!("Transferring {} file(s)…", self.transfers)
+            format!("Передача файлов: {}", self.transfers)
         } else if let Some(notice) = &self.notice {
             notice.clone()
         } else {
@@ -59,8 +59,8 @@ impl App {
                         .state
                         .user(user_id)
                         .map(|user| user.display_name().to_string())
-                        .unwrap_or_else(|| "Someone".to_string());
-                    format!("{name} is typing...")
+                        .unwrap_or_else(|| "Кто-то".to_string());
+                    format!("{name} печатает…")
                 }
                 None => String::new(),
             }
@@ -166,7 +166,7 @@ impl App {
                             .text_color(rgb(LINK))
                             .cursor_pointer()
                             .hover(|style| style.bg(rgb(RAIL_HOVER)))
-                            .child("Load older messages")
+                            .child("Загрузить историю")
                             .on_click(move |_, _, cx| {
                                 let _ = weak.update(cx, |app, cx| {
                                     app.load_older();
@@ -177,7 +177,7 @@ impl App {
                     .into_any_element()
             }
             Row::Date(label) => divider(label, FAINT).into_any_element(),
-            Row::Unread => divider("NEW", DANGER).into_any_element(),
+            Row::Unread => divider("НОВОЕ", DANGER).into_any_element(),
             Row::Message { id, compact } => {
                 let channel = self.rows_channel.as_deref().unwrap_or_default();
                 match self.state.message(channel, id) {
@@ -206,7 +206,7 @@ impl App {
         } else {
             author_color
         };
-        let time = format_time(&message.timestamp);
+        let time = format_timestamp(&message.timestamp);
         let edited = message.edited_timestamp.is_some();
         let is_mine = self
             .state
@@ -217,8 +217,8 @@ impl App {
         let snowflake_id = snowflake(&message.id) as usize;
 
         let mut content = div()
-            .text_size(px(14.))
-            .line_height(px(20.))
+            .text_size(px(16.))
+            .line_height(px(22.))
             .text_color(rgb(TEXT));
 
         if let Some(reference) = &message.referenced_message {
@@ -573,7 +573,7 @@ impl App {
                 .id(ElementId::named_usize("author-name", snowflake_id))
                 .cursor_pointer()
                 .hover(|style| style.underline())
-                .text_size(px(14.))
+                .text_size(px(16.))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(author_color))
                 .child(author)
@@ -589,10 +589,10 @@ impl App {
         });
         header = header.child(
             div()
-                .text_size(px(11.))
+                .text_size(px(12.))
                 .text_color(rgb(FAINT))
                 .child(if edited {
-                    format!("{time} (edited)")
+                    format!("{time} (изменено)")
                 } else {
                     time.clone()
                 }),
@@ -643,7 +643,8 @@ impl App {
             .flex()
             .gap(px(12.))
             .px(px(10.))
-            .py(px(3.))
+            .pt(if compact { px(2.) } else { px(16.) })
+            .pb(px(2.))
             .rounded(px(4.))
             .hover(|style| style.bg(rgb(0x2e3035)))
             .child(actions)
@@ -684,15 +685,30 @@ impl App {
         let is_dm = channel.is_some_and(|channel| {
             channel.kind == Channel::DM || channel.kind == Channel::GROUP_DM
         });
-        let icon = if is_dm {
-            IconName::AtSign
+        let dm_user = if is_dm {
+            channel.and_then(|channel| {
+                let me = self.state.me.as_ref().map(|user| user.id.as_str());
+                channel
+                    .recipients
+                    .iter()
+                    .find(|user| Some(user.id.as_str()) != me)
+                    .or_else(|| {
+                        channel
+                            .recipient_ids
+                            .iter()
+                            .find(|id| Some(id.as_str()) != me)
+                            .and_then(|id| self.state.user(id))
+                    })
+            })
         } else {
-            IconName::Hash
+            None
         };
         let topic = channel.and_then(|channel| channel.topic.clone());
-        let status = if self.connection.starts_with("connected") {
+        let status = if self.connection.starts_with("подключено") {
             "online"
-        } else if self.connection.starts_with("reconnecting") || self.connection == "connecting" {
+        } else if self.connection.starts_with("переподключение")
+            || self.connection.starts_with("подключение")
+        {
             "idle"
         } else {
             "offline"
@@ -707,18 +723,31 @@ impl App {
             .px(px(16.))
             .border_b(px(1.))
             .border_color(rgb(RAIL))
-            .child(
-                gpui_kit::component::Icon::new(icon)
+            .child(match dm_user {
+                Some(user) => mini_avatar(
+                    Some(user),
+                    user.display_name(),
+                    self.state.presence(&user.id),
+                )
+                .into_any_element(),
+                None => gpui_kit::component::Icon::new(IconName::Hash)
                     .size(px(20.))
-                    .text_color(rgb(ICON)),
-            )
+                    .text_color(rgb(ICON))
+                    .into_any_element(),
+            })
             .child(
                 div()
-                    .text_size(px(15.))
+                    .text_size(px(16.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(rgb(TEXT_BRIGHT))
                     .child(title.unwrap_or_default()),
-            );
+            )
+            .children(dm_user.map(|user| {
+                div()
+                    .text_size(px(12.))
+                    .text_color(rgb(MUTED))
+                    .child(status_text(self.state.presence(&user.id)))
+            }));
 
         if let Some(topic) = topic {
             bar = bar.child(
@@ -734,17 +763,8 @@ impl App {
             bar = bar.child(div().flex_1());
         }
 
-        if let Some(user_id) = channel.and_then(|channel| {
-            if is_dm {
-                channel
-                    .recipients
-                    .first()
-                    .map(|user| user.id.clone())
-                    .or_else(|| channel.recipient_ids.first().cloned())
-            } else {
-                None
-            }
-        }) {
+        if let Some(user) = dm_user {
+            let user_id = user.id.clone();
             bar = bar.child(
                 div()
                     .id("dm-profile")
@@ -782,18 +802,53 @@ impl App {
                     .cursor_pointer()
                     .hover(|style| style.bg(rgb(RAIL_HOVER)).text_color(rgb(TEXT_BRIGHT)))
                     .child(gpui_kit::component::Icon::new(IconName::Users).size(px(17.)))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        if matches!(this.right_pane, Some(RightPane::Members)) {
-                            this.right_pane = None;
-                        } else {
-                            this.right_pane = Some(RightPane::Members);
-                            this.sync_members();
-                            this.request_members();
-                        }
-                        cx.notify();
-                    })),
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_members(cx))),
             );
         }
+
+        bar = bar.child(self.header_button(
+            "header-threads",
+            IconName::ListFilter,
+            "Список веток пока не поддерживается",
+            cx,
+        ));
+        bar = bar.child(self.header_button(
+            "header-bell",
+            IconName::Bell,
+            "Уведомления пока не поддерживаются",
+            cx,
+        ));
+        bar = bar.child(self.header_button(
+            "header-pin",
+            IconName::Pin,
+            "Закреплённые сообщения пока не поддерживаются",
+            cx,
+        ));
+
+        bar = bar.child(
+            div()
+                .id("search-box")
+                .w(px(220.))
+                .h(px(28.))
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .px(px(8.))
+                .rounded(px(4.))
+                .bg(rgb(RAIL))
+                .child(
+                    gpui_kit::component::Icon::new(IconName::Search)
+                        .size(px(15.))
+                        .text_color(rgb(MUTED)),
+                )
+                .child(
+                    div().flex_1().min_w(px(0.)).child(
+                        Input::new(&self.search_input)
+                            .appearance(false)
+                            .bordered(false),
+                    ),
+                ),
+        );
 
         bar = bar.child(
             div()
@@ -843,6 +898,54 @@ impl App {
         bar
     }
 
+    fn composer_action(
+        &self,
+        id: &'static str,
+        icon: AnyElement,
+        notice: &'static str,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id(id)
+            .size(px(32.))
+            .rounded(px(4.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_color(rgb(MUTED))
+            .cursor_pointer()
+            .hover(|style| style.bg(rgb(RAIL_HOVER)).text_color(rgb(TEXT_BRIGHT)))
+            .child(icon)
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.notice = Some(notice.to_string());
+                cx.notify();
+            }))
+    }
+
+    fn header_button(
+        &self,
+        id: &'static str,
+        icon: IconName,
+        notice: &'static str,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id(id)
+            .size(px(28.))
+            .rounded(px(4.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_color(rgb(MUTED))
+            .cursor_pointer()
+            .hover(|style| style.bg(rgb(RAIL_HOVER)).text_color(rgb(TEXT_BRIGHT)))
+            .child(gpui_kit::component::Icon::new(icon).size(px(18.)))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.notice = Some(notice.to_string());
+                cx.notify();
+            }))
+    }
+
     fn render_composer(&self, cx: &Context<Self>) -> impl IntoElement {
         let mut composer_block = div().px(px(16.)).pb(px(14.)).flex().flex_col().gap(px(6.));
 
@@ -860,7 +963,7 @@ impl App {
                             .text_size(px(12.))
                             .text_color(rgb(MUTED))
                             .truncate()
-                            .child(format!("Replying to {name}: {preview}")),
+                            .child(format!("Ответ {name}: {preview}")),
                     )
                     .child(
                         div()
@@ -868,7 +971,7 @@ impl App {
                             .text_size(px(12.))
                             .text_color(rgb(LINK))
                             .cursor_pointer()
-                            .child("Cancel")
+                            .child("Отмена")
                             .on_click(cx.listener(|this, _, _, cx| this.cancel_reply(cx))),
                     ),
             );
@@ -884,7 +987,7 @@ impl App {
                         div()
                             .text_size(px(12.))
                             .text_color(rgb(MUTED))
-                            .child(format!("Editing message {message_id}")),
+                            .child(format!("Редактирование {message_id}")),
                     )
                     .child(
                         div()
@@ -892,7 +995,7 @@ impl App {
                             .text_size(px(12.))
                             .text_color(rgb(LINK))
                             .cursor_pointer()
-                            .child("Cancel")
+                            .child("Отмена")
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.cancel_edit(window, cx)),
                             ),
@@ -945,6 +1048,54 @@ impl App {
                                 .bordered(false)
                                 .h(px(40.)),
                         ),
+                )
+                .child(
+                    self.composer_action(
+                        "composer-gift",
+                        gpui_kit::component::Icon::new(IconName::Gift)
+                            .size(px(20.))
+                            .into_any_element(),
+                        "Подарки пока не поддерживаются",
+                        cx,
+                    ),
+                )
+                .child(
+                    self.composer_action(
+                        "composer-gif",
+                        div()
+                            .px(px(4.))
+                            .rounded(px(3.))
+                            .border_1()
+                            .border_color(rgb(MUTED))
+                            .text_size(px(9.))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(rgb(MUTED))
+                            .child("GIF")
+                            .into_any_element(),
+                        "GIF пока не поддерживаются",
+                        cx,
+                    ),
+                )
+                .child(
+                    self.composer_action(
+                        "composer-sticker",
+                        gpui_kit::component::Icon::new(IconName::Sticker)
+                            .size(px(20.))
+                            .into_any_element(),
+                        "Стикеры пока не поддерживаются",
+                        cx,
+                    ),
+                )
+                .child(
+                    self.composer_action(
+                        "composer-emoji",
+                        gpui_kit::component::Icon::default()
+                            .path("icons/smile.svg")
+                            .size(px(20.))
+                            .into_any_element(),
+                        "Пикер эмодзи скоро",
+                        cx,
+                    ),
                 )
                 .child(
                     div()

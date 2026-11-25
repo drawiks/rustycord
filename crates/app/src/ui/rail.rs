@@ -24,11 +24,9 @@ impl App {
                 let (channel_unread, channel_mentions) = self.channel_unread(channel);
                 (unread || channel_unread, mentions + channel_mentions)
             });
-        let dm_visual = div()
-            .text_size(px(20.))
-            .font_weight(FontWeight::BOLD)
+        let dm_visual = gpui_kit::component::Icon::new(IconName::MessageSquare)
+            .size(px(24.))
             .text_color(rgb(0xffffff))
-            .child("@")
             .into_any_element();
         rail = rail.child(rail_button(
             gpui_kit::SharedString::from("rail-dms"),
@@ -76,6 +74,40 @@ impl App {
                     this.focus_composer(window, cx);
                 }),
             ));
+        }
+
+        for (id, icon, color, notice) in [
+            (
+                "rail-add",
+                IconName::Plus,
+                ONLINE,
+                "Создание серверов скоро",
+            ),
+            (
+                "rail-explore",
+                IconName::Compass,
+                MUTED,
+                "Обзор серверов скоро",
+            ),
+        ] {
+            rail = rail.child(
+                div()
+                    .id(id)
+                    .size(px(48.))
+                    .rounded(px(16.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(rgb(SIDEBAR))
+                    .text_color(rgb(color))
+                    .cursor_pointer()
+                    .hover(|style| style.bg(rgb(RAIL_HOVER)))
+                    .child(gpui_kit::component::Icon::new(icon).size(px(22.)))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.notice = Some(notice.to_string());
+                        cx.notify();
+                    })),
+            );
         }
 
         rail

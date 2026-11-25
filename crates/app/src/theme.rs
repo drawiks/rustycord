@@ -31,7 +31,7 @@ pub fn apply(cx: &mut App) {
     Theme::update(cx, |theme| {
         theme.font_family = "Inter Variable".into();
         theme.mono_font_family = "JetBrains Mono".into();
-        theme.font_size = px(14.);
+        theme.font_size = px(16.);
         theme.mono_font_size = px(13.);
         theme.radius = px(6.);
         theme.radius_lg = px(12.);

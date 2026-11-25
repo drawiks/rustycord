@@ -51,11 +51,16 @@ pub(super) fn parse_timestamp(value: &str) -> Option<DateTime<Local>> {
 pub(super) fn day_label(date: NaiveDate) -> String {
     let today = Local::now().date_naive();
     if date == today {
-        "Today".to_string()
+        "Сегодня".to_string()
     } else if Some(date) == today.pred_opt() {
-        "Yesterday".to_string()
+        "Вчера".to_string()
     } else {
-        date.format("%d %B %Y").to_string()
+        format!(
+            "{} {} {} г.",
+            date.day(),
+            MONTHS[(date.month0() as usize).min(11)],
+            date.year()
+        )
     }
 }
 
@@ -68,14 +73,43 @@ pub(super) fn snippet(text: &str, limit: usize) -> String {
     }
 }
 
-pub(super) fn format_time(timestamp: &str) -> String {
-    DateTime::parse_from_rfc3339(timestamp)
-        .map(|time| {
-            time.with_timezone(&chrono::Local)
-                .format("%H:%M")
-                .to_string()
-        })
-        .unwrap_or_default()
+const MONTHS: [&str; 12] = [
+    "января",
+    "февраля",
+    "марта",
+    "апреля",
+    "мая",
+    "июня",
+    "июля",
+    "августа",
+    "сентября",
+    "октября",
+    "ноября",
+    "декабря",
+];
+
+pub(super) fn format_timestamp(value: &str) -> String {
+    let Some(time) = parse_timestamp(value) else {
+        return String::new();
+    };
+    let today = Local::now().date_naive();
+    let date = time.date_naive();
+    if date == today {
+        time.format("%H:%M").to_string()
+    } else if Some(date) == today.pred_opt() {
+        time.format("Вчера, в %H:%M").to_string()
+    } else {
+        time.format("%d.%m.%Y, %H:%M").to_string()
+    }
+}
+
+pub(super) fn status_text(status: &str) -> &'static str {
+    match status {
+        "online" => "В сети",
+        "idle" => "Не активен",
+        "dnd" => "Не беспокоить",
+        _ => "Не в сети",
+    }
 }
 
 pub(super) fn initials(name: &str) -> String {
@@ -293,7 +327,7 @@ pub(super) fn short_time(time: DateTime<Local>) -> String {
     if time.date_naive() == now.date_naive() {
         time.format("%H:%M").to_string()
     } else if time.date_naive().year() == now.date_naive().year() {
-        time.format("%d %b").to_string()
+        time.format("%d.%m").to_string()
     } else {
         time.format("%d.%m.%y").to_string()
     }
@@ -377,5 +411,24 @@ mod tests {
         let a = snowflake_time("175928847299117063").unwrap();
         let b = snowflake_time("175928847299117064").unwrap();
         assert!(b >= a);
+    }
+}
+
+#[cfg(test)]
+mod date_tests {
+    use super::*;
+
+    #[test]
+    fn russian_day_labels() {
+        let today = Local::now().date_naive();
+        assert_eq!(day_label(today), "Сегодня");
+        assert_eq!(
+            day_label(today.with_day(1).unwrap_or(today)),
+            if today.day() == 1 {
+                "Сегодня"
+            } else {
+                "1 января"
+            }
+        );
     }
 }

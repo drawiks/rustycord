@@ -342,7 +342,7 @@ impl App {
                                     .text_size(px(12.))
                                     .text_color(rgb(TEXT))
                                     .child(presence_dot(&status))
-                                    .child(status),
+                                    .child(status_text(&status)),
                             ),
                     ),
             );
@@ -362,7 +362,7 @@ impl App {
                             .size(px(14.))
                             .text_color(rgb(IDLE)),
                     )
-                    .child("Server owner"),
+                    .child("Владелец сервера"),
             );
         }
 
@@ -373,7 +373,7 @@ impl App {
                     .pb(px(10.))
                     .text_size(px(12.))
                     .text_color(rgb(MUTED))
-                    .child(format!("Joined {joined}")),
+                    .child(format!("На сервере с {joined}")),
             );
         }
 
@@ -405,7 +405,7 @@ impl App {
                             .text_size(px(11.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(rgb(MUTED))
-                            .child("ROLES"),
+                            .child("РОЛИ"),
                     )
                     .child(div().flex().flex_wrap().gap(px(4.)).children(chips)),
             );
@@ -426,7 +426,7 @@ impl App {
                 .text_color(rgb(0xffffff))
                 .cursor_pointer()
                 .hover(|style| style.bg(rgb(0x4752c4)))
-                .child("Message")
+                .child("Написать")
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.select_channel(click_id.clone(), cx);
                     this.right_pane = None;
@@ -437,7 +437,7 @@ impl App {
             div()
                 .text_size(px(12.))
                 .text_color(rgb(FAINT))
-                .child("No direct messages yet")
+                .child("Личных сообщений пока нет")
                 .into_any_element()
         }));
 

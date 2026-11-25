@@ -11,7 +11,7 @@ impl App {
                 .guild(id)
                 .map(|guild| guild.name.clone())
                 .unwrap_or_default(),
-            None => "Direct Messages".to_string(),
+            None => "Личные сообщения".to_string(),
         };
 
         let mut list = div()
@@ -38,26 +38,81 @@ impl App {
             .flex()
             .flex_col()
             .bg(rgb(SIDEBAR))
-            .child(
+            .child({
+                let visual = match &self.selected_guild {
+                    Some(guild_id) => self
+                        .state
+                        .guild(guild_id)
+                        .map(|guild| match &guild.icon {
+                            Some(icon) => gpui_kit::img(guild_icon_url(guild_id, icon))
+                                .size(px(32.))
+                                .into_any_element(),
+                            None => div()
+                                .size(px(32.))
+                                .rounded(px(16.))
+                                .bg(rgb(RAIL))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .text_size(px(12.))
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(rgb(0xffffff))
+                                .child(initials(&guild.name))
+                                .into_any_element(),
+                        })
+                        .unwrap_or_else(|| div().size(px(32.)).into_any_element()),
+                    None => div()
+                        .size(px(32.))
+                        .rounded(px(16.))
+                        .bg(rgb(RAIL))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            gpui_kit::component::Icon::new(IconName::MessageSquare)
+                                .size(px(18.))
+                                .text_color(rgb(MUTED)),
+                        )
+                        .into_any_element(),
+                };
                 div()
                     .h(px(48.))
                     .flex_none()
                     .flex()
                     .items_center()
-                    .justify_between()
-                    .px(px(16.))
+                    .gap(px(8.))
+                    .px(px(12.))
                     .border_b(px(1.))
                     .border_color(rgb(RAIL))
                     .text_size(px(15.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(rgb(TEXT_BRIGHT))
-                    .child(div().truncate().child(title))
+                    .child(div().flex_none().child(visual))
+                    .child(div().flex_1().truncate().child(title))
                     .child(
                         gpui_kit::component::Icon::new(IconName::ChevronDown)
-                            .size(px(16.))
+                            .size(px(14.))
                             .text_color(rgb(ICON)),
-                    ),
-            )
+                    )
+                    .child(if self.selected_guild.is_some() {
+                        let open = matches!(self.right_pane, Some(RightPane::Members));
+                        div()
+                            .id("sidebar-members")
+                            .size(px(24.))
+                            .rounded(px(4.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_color(rgb(if open { 0xffffff } else { MUTED }))
+                            .cursor_pointer()
+                            .hover(|style| style.text_color(rgb(TEXT_BRIGHT)))
+                            .child(gpui_kit::component::Icon::new(IconName::Users).size(px(18.)))
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_members(cx)))
+                            .into_any_element()
+                    } else {
+                        div().size(px(24.)).into_any_element()
+                    })
+            })
             .child(list)
             .child(self.render_user_panel(cx))
     }
@@ -171,7 +226,7 @@ impl App {
                 .flex()
                 .items_center()
                 .gap(px(6.))
-                .h(px(30.))
+                .h(px(34.))
                 .pl(px(8. + depth as f32 * 10.))
                 .pr(px(8.))
                 .rounded(px(4.))
@@ -263,7 +318,7 @@ impl App {
             .px(px(4.))
             .pt(px(14.))
             .pb(px(4.))
-            .text_size(px(11.))
+            .text_size(px(12.))
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(rgb(MUTED))
             .cursor_pointer()
@@ -363,8 +418,8 @@ impl App {
         if channels.is_empty() {
             list = list.child(empty_state(
                 IconName::AtSign,
-                "No direct messages",
-                "Open a DM from Discord and it will show up here",
+                "Нет личных сообщений",
+                "Личные чаты появятся здесь",
             ));
         }
 
@@ -404,7 +459,7 @@ impl App {
                         .min_w(px(0.))
                         .child(
                             div()
-                                .text_size(px(14.))
+                                .text_size(px(15.))
                                 .truncate()
                                 .font_weight(if unread && !selected {
                                     FontWeight::MEDIUM
@@ -471,7 +526,7 @@ impl App {
                     .min_w(px(0.))
                     .child(
                         div()
-                            .text_size(px(13.))
+                            .text_size(px(15.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(rgb(TEXT_BRIGHT))
                             .truncate()
@@ -479,24 +534,71 @@ impl App {
                     )
                     .child(
                         div()
-                            .text_size(px(11.))
+                            .text_size(px(12.))
                             .text_color(rgb(MUTED))
-                            .child(status),
+                            .child(status_text(&status)),
                     ),
             )
             .child(
                 div()
-                    .id("logout")
-                    .size(px(28.))
-                    .rounded(px(4.))
                     .flex()
                     .items_center()
-                    .justify_center()
-                    .text_color(rgb(MUTED))
-                    .cursor_pointer()
-                    .hover(|style| style.bg(rgb(RAIL_HOVER)).text_color(rgb(TEXT_BRIGHT)))
-                    .child(gpui_kit::component::Icon::new(IconName::LogOut).size(px(16.)))
-                    .on_click(cx.listener(|this, _, window, cx| this.logout(window, cx))),
+                    .gap(px(2.))
+                    .child(panel_button(
+                        "panel-mic",
+                        IconName::Mic,
+                        "Голосовые каналы пока не поддерживаются",
+                        cx,
+                    ))
+                    .child(panel_button(
+                        "panel-headphones",
+                        IconName::Headphones,
+                        "Голосовые каналы пока не поддерживаются",
+                        cx,
+                    ))
+                    .child(panel_button(
+                        "panel-settings",
+                        IconName::Settings,
+                        "Настройки скоро",
+                        cx,
+                    ))
+                    .child(
+                        div()
+                            .id("logout")
+                            .size(px(28.))
+                            .rounded(px(4.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_color(rgb(MUTED))
+                            .cursor_pointer()
+                            .hover(|style| style.bg(rgb(RAIL_HOVER)).text_color(rgb(TEXT_BRIGHT)))
+                            .child(gpui_kit::component::Icon::new(IconName::LogOut).size(px(16.)))
+                            .on_click(cx.listener(|this, _, window, cx| this.logout(window, cx))),
+                    ),
             )
     }
+}
+
+fn panel_button(
+    id: &'static str,
+    icon: IconName,
+    notice: &'static str,
+    cx: &mut Context<App>,
+) -> impl IntoElement {
+    div()
+        .id(id)
+        .size(px(28.))
+        .rounded(px(4.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_color(rgb(MUTED))
+        .cursor_pointer()
+        .hover(|style| style.bg(rgb(RAIL_HOVER)).text_color(rgb(TEXT_BRIGHT)))
+        .child(gpui_kit::component::Icon::new(icon).size(px(16.)))
+        .on_click(cx.listener(move |this, _, _, cx| {
+            this.notice = Some(notice.to_string());
+            cx.notify();
+        }))
 }

@@ -50,8 +50,8 @@ pub fn layout(content: &str, state: &State) -> Layout {
     let base = TextStyle {
         color: rgb(TEXT).into(),
         font_family: "Inter Variable".into(),
-        font_size: px(14.).into(),
-        line_height: px(20.).into(),
+        font_size: px(16.).into(),
+        line_height: px(22.).into(),
         ..TextStyle::default()
     };
 

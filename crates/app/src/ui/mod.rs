@@ -62,6 +62,9 @@ pub struct App {
     unread_marker: Option<Id>,
     right_pane: Option<RightPane>,
     member_rows: Vec<MemberRow>,
+    search_input: gpui_kit::Entity<InputState>,
+    search_query: String,
+    window_title: Option<String>,
     transfers: usize,
     notice: Option<String>,
     pending_token: Option<String>,
@@ -72,13 +75,19 @@ pub struct App {
 
 impl App {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let token_input = cx.new(|cx| InputState::new(window, cx).placeholder("User token"));
+        let token_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Токен пользователя"));
         let composer = cx.new(|cx| {
             TextareaState::new(window, cx)
-                .placeholder("Message")
+                .placeholder("Написать")
                 .submit_on_enter(true)
         });
         let transcript = cx.new(|cx| MessageScrollerState::new(0, cx));
+        let search_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Поиск")
+                .clean_on_escape()
+        });
         let (ui_tx, mut ui_rx) = unbounded_channel();
         let debug = debug_render();
 
@@ -129,6 +138,9 @@ impl App {
             unread_marker: None,
             right_pane: None,
             member_rows: Vec::new(),
+            search_input,
+            search_query: String::new(),
+            window_title: None,
             transfers: 0,
             notice: None,
             pending_token: None,
@@ -142,6 +154,16 @@ impl App {
             |this, _input, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::PressEnter { shift: false, .. }) {
                     this.login(cx);
+                }
+            },
+        ));
+        app.subscriptions.push(cx.subscribe(
+            &app.search_input,
+            |this, _input, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.search_query = this.search_input.read(cx).value().to_string();
+                    this.sync_transcript(cx);
+                    cx.notify();
                 }
             },
         ));
@@ -169,13 +191,13 @@ impl App {
     fn login(&mut self, cx: &mut Context<Self>) {
         let token = self.token_input.read(cx).value().trim().to_string();
         if token.is_empty() {
-            self.error = Some("Token is empty".to_string());
+            self.error = Some("Токен пуст".to_string());
             cx.notify();
             return;
         }
         self.screen = Screen::Connecting;
         self.error = None;
-        self.connection = "connecting".to_string();
+        self.connection = "подключение…".to_string();
         self.pending_token = Some(token.clone());
         self.net = Some(crate::net::spawn(token, self.ui_tx.clone()));
         cx.notify();
@@ -196,7 +218,7 @@ impl App {
             }
             UiEvent::LoggedIn => {
                 self.screen = Screen::Main;
-                self.connection = "connecting".to_string();
+                self.connection = "подключение…".to_string();
                 if let Some(token) = self.pending_token.take() {
                     save_token(&token);
                 }
@@ -212,12 +234,12 @@ impl App {
                 let event = *event;
                 if let Event::Connection(state) = &event {
                     self.connection = match state {
-                        ConnectionState::Connected => "connected".to_string(),
-                        ConnectionState::Resumed => "connected".to_string(),
+                        ConnectionState::Connected => "подключено".to_string(),
+                        ConnectionState::Resumed => "подключено".to_string(),
                         ConnectionState::Reconnecting { attempt } => {
-                            format!("reconnecting ({attempt})")
+                            format!("переподключение ({attempt})")
                         }
-                        ConnectionState::Disconnected { reason } => format!("offline: {reason}"),
+                        ConnectionState::Disconnected { reason } => format!("не в сети: {reason}"),
                     };
                 }
                 let ready = matches!(event, Event::Ready(_));
@@ -339,6 +361,14 @@ impl App {
                 }
             });
         self.selected_channel = None;
+        if guild.is_some() {
+            match &self.right_pane {
+                None | Some(RightPane::Profile { guild_id: None, .. }) => {
+                    self.right_pane = Some(RightPane::Members);
+                }
+                _ => {}
+            }
+        }
         if let Some(channel) = channel {
             self.select_channel(channel, cx);
         } else {
@@ -369,6 +399,37 @@ impl App {
         }
         self.mark_read(&channel_id, true);
         self.sync_transcript(cx);
+        let dm_recipient = self
+            .state
+            .channel(&channel_id)
+            .filter(|channel| channel.kind == Channel::DM || channel.kind == Channel::GROUP_DM)
+            .and_then(|channel| {
+                let me = self.state.me.as_ref().map(|user| user.id.as_str());
+                channel
+                    .recipients
+                    .iter()
+                    .map(|user| &user.id)
+                    .chain(channel.recipient_ids.iter())
+                    .find(|id| Some(id.as_str()) != me)
+                    .cloned()
+            });
+        match dm_recipient {
+            Some(user_id) => {
+                if self.right_pane.is_none() || matches!(self.right_pane, Some(RightPane::Members))
+                {
+                    self.right_pane = Some(RightPane::Profile {
+                        user_id,
+                        guild_id: None,
+                    });
+                }
+            }
+            None => {
+                if self.selected_guild.is_some() && self.right_pane.is_none() {
+                    self.right_pane = Some(RightPane::Members);
+                    self.sync_members();
+                }
+            }
+        }
         if matches!(self.right_pane, Some(RightPane::Members)) {
             self.request_members();
         }
@@ -411,10 +472,10 @@ impl App {
             .and_then(|id| self.state.channel(id))
         {
             Some(channel) if channel.kind == Channel::DM || channel.kind == Channel::GROUP_DM => {
-                format!("Message @{}", self.state.channel_display_name(channel))
+                format!("Написать @{}", self.state.channel_display_name(channel))
             }
-            Some(channel) => format!("Message #{}", self.state.channel_display_name(channel)),
-            None => "Message".to_string(),
+            Some(channel) => format!("Написать в #{}", self.state.channel_display_name(channel)),
+            None => "Написать".to_string(),
         };
         self.composer.update(cx, |composer, cx| {
             composer.set_placeholder(placeholder, window, cx)
@@ -458,7 +519,7 @@ impl App {
             files: true,
             directories: false,
             multiple: true,
-            prompt: Some("Attach files".into()),
+            prompt: Some("Прикрепить файлы".into()),
         });
         let entity = cx.entity().downgrade();
         cx.spawn(async move |_, cx| {
@@ -473,18 +534,18 @@ impl App {
 
     fn enqueue_upload(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         let Some(channel_id) = self.selected_channel.clone() else {
-            self.error = Some("Select a channel first".to_string());
+            self.error = Some("Сначала выберите канал".to_string());
             cx.notify();
             return;
         };
         let name = path
             .file_name()
             .map(|name| name.to_string_lossy().to_string())
-            .unwrap_or_else(|| "file".to_string());
+            .unwrap_or_else(|| "файл".to_string());
 
         match std::fs::metadata(&path) {
             Ok(meta) if meta.len() > 10 * 1024 * 1024 => {
-                self.error = Some(format!("{name} exceeds the 10 MB upload limit"));
+                self.error = Some(format!("{name}: превышен лимит 10 МБ"));
             }
             Ok(_) => {
                 if let Some(net) = &self.net {
@@ -495,10 +556,10 @@ impl App {
                         content: String::new(),
                     });
                     self.transfers += 1;
-                    self.notice = Some(format!("Uploading {name}…"));
+                    self.notice = Some(format!("Загрузка {name}…"));
                 }
             }
-            Err(error) => self.error = Some(format!("Cannot read {name}: {error}")),
+            Err(error) => self.error = Some(format!("Не удалось прочитать {name}: {error}")),
         }
         cx.notify();
     }
@@ -525,7 +586,7 @@ impl App {
                 name: name.clone(),
             });
             self.transfers += 1;
-            self.notice = Some(format!("Downloading {name}…"));
+            self.notice = Some(format!("Скачивание {name}…"));
         }
         cx.notify();
     }
@@ -558,6 +619,17 @@ impl App {
                 }
             }
         }
+    }
+
+    fn toggle_members(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.right_pane, Some(RightPane::Members)) {
+            self.right_pane = None;
+        } else {
+            self.right_pane = Some(RightPane::Members);
+            self.sync_members();
+            self.request_members();
+        }
+        cx.notify();
     }
 
     fn request_members(&self) {
@@ -718,13 +790,29 @@ impl App {
             rows.push(Row::LoadOlder);
         }
 
-        let read_marker = self.unread_marker.clone();
+        let query = self.search_query.trim().to_lowercase();
+        let searching = !query.is_empty();
+        let read_marker = if searching {
+            None
+        } else {
+            self.unread_marker.clone()
+        };
         let mut previous: Option<(Id, DateTime<Local>)> = None;
         let mut last_date: Option<NaiveDate> = None;
         let mut unread_shown = false;
         let mut first = true;
 
         for message in messages {
+            if searching {
+                let author = self
+                    .state
+                    .member_name(channel_id, &message.author.id)
+                    .unwrap_or_else(|| message.author.display_name())
+                    .to_lowercase();
+                if !message.content.to_lowercase().contains(&query) && !author.contains(&query) {
+                    continue;
+                }
+            }
             let timestamp = parse_timestamp(&message.timestamp);
             let date = timestamp.map(|time| time.date_naive());
             if let Some(date) = date
@@ -1037,7 +1125,21 @@ impl App {
 }
 
 impl Render for App {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let title = match (&self.selected_guild, &self.selected_channel) {
+            (Some(guild_id), _) => self.state.guild(guild_id).map(|guild| guild.name.clone()),
+            (None, Some(channel_id)) => self
+                .state
+                .channel(channel_id)
+                .map(|channel| self.state.channel_display_name(channel)),
+            _ => None,
+        }
+        .unwrap_or_else(|| "rustycord".to_string());
+        if self.window_title.as_deref() != Some(title.as_str()) {
+            window.set_window_title(&title);
+            self.window_title = Some(title);
+        }
+
         match self.screen {
             Screen::Login | Screen::Connecting => self.render_login(cx).into_any_element(),
             Screen::Main => self.render_main(cx).into_any_element(),

@@ -22,19 +22,19 @@ impl App {
                 div()
                     .text_size(px(13.))
                     .text_color(rgb(MUTED))
-                    .child("Sign in with your Discord account token."),
+                    .child("Вход по токену Discord"),
             )
             .child(
                 Input::new(&self.token_input)
                     .appearance(true)
                     .bordered(true),
             )
-            .child(self.render_primary_button("Login", connecting, cx))
+            .child(self.render_primary_button("Войти", connecting, cx))
             .child(
                 div()
                     .text_size(px(12.))
                     .text_color(rgb(FAINT))
-                    .child("Browser: DevTools (F12) -> Application -> Local Storage -> token"),
+                    .child("Браузер: DevTools (F12) → Application → Local Storage → token"),
             );
 
         if let Some(error) = &self.error {
@@ -62,7 +62,11 @@ impl App {
         busy: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let text = if busy { "Connecting..." } else { label };
+        let text = if busy {
+            "Подключение…"
+        } else {
+            label
+        };
         div()
             .id("primary-button")
             .flex()

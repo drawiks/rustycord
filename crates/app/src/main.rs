@@ -43,15 +43,15 @@ fn window_options() -> WindowOptions {
 
     WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::new(
-            point(px(80.), px(80.)),
-            size(px(1280.), px(820.)),
+            point(px(60.), px(60.)),
+            size(px(1440.), px(900.)),
         ))),
         titlebar: Some(TitlebarOptions {
             title: Some("rustycord".into()),
             appears_transparent: false,
             traffic_light_position: None,
         }),
-        window_min_size: Some(size(px(900.), px(600.))),
+        window_min_size: Some(size(px(1000.), px(700.))),
         icon,
         ..Default::default()
     }
