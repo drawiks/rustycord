@@ -65,6 +65,7 @@ pub struct App {
     search_input: gpui_kit::Entity<InputState>,
     search_query: String,
     window_title: Option<String>,
+    profile_popup: Option<(Id, Option<Id>)>,
     transfers: usize,
     notice: Option<String>,
     pending_token: Option<String>,
@@ -141,6 +142,7 @@ impl App {
             search_input,
             search_query: String::new(),
             window_title: None,
+            profile_popup: None,
             transfers: 0,
             notice: None,
             pending_token: None,
@@ -322,6 +324,7 @@ impl App {
     fn pick_default_channel(&mut self, cx: &mut Context<Self>) {
         let guild = self.state.guilds.first().map(|g| g.id.clone());
         self.selected_guild = guild.clone();
+        self.profile_popup = None;
         let channel = guild
             .and_then(|id| {
                 self.state
@@ -345,6 +348,7 @@ impl App {
             self.right_pane = None;
         }
         self.selected_guild = guild.clone();
+        self.profile_popup = None;
         let channel = guild
             .as_ref()
             .and_then(|id| {
@@ -385,6 +389,7 @@ impl App {
             return;
         }
         self.selected_channel = Some(channel_id.clone());
+        self.profile_popup = None;
         self.unread_marker = self
             .state
             .read_states
@@ -1094,6 +1099,10 @@ impl App {
 
         if self.right_pane.is_some() {
             root = root.child(self.render_right_pane(cx));
+        }
+
+        if self.profile_popup.is_some() {
+            root = root.child(self.render_profile_popup(cx));
         }
 
         if let Some(url) = self.image_viewer.clone() {

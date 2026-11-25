@@ -1,6 +1,6 @@
 use super::widgets::*;
 use super::*;
-use gpui_kit::{AnyElement, WeakEntity};
+use gpui_kit::{AnyElement, WeakEntity, linear_color_stop, linear_gradient};
 
 impl App {
     pub(super) fn render_right_pane(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -187,10 +187,7 @@ impl App {
 
                 row.on_click(move |_, _, cx| {
                     let _ = weak.update(cx, |app, cx| {
-                        app.right_pane = Some(RightPane::Profile {
-                            user_id: click_id.clone(),
-                            guild_id: Some(click_guild.clone()),
-                        });
+                        app.profile_popup = Some((click_id.clone(), Some(click_guild.clone())));
                         cx.notify();
                     });
                 })
@@ -205,46 +202,6 @@ impl App {
         guild_id: Option<&str>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let user = self.state.user(user_id).cloned();
-        let name = match (&user, guild_id) {
-            (Some(user), Some(guild_id)) => self.state.member_display_name(guild_id, user),
-            (Some(user), None) => user.display_name().to_string(),
-            _ => user_id.to_string(),
-        };
-        let username = user
-            .as_ref()
-            .map(|user| format!("@{}", user.username))
-            .unwrap_or_default();
-        let status = self.state.presence(user_id).to_string();
-        let color = guild_id
-            .map(|guild_id| self.state.member_role_color(guild_id, user_id))
-            .unwrap_or(0);
-        let color = if color == 0 { TEXT_BRIGHT } else { color };
-        let roles: Vec<(String, u32)> = guild_id
-            .map(|guild_id| {
-                self.state
-                    .member_roles(guild_id, user_id)
-                    .into_iter()
-                    .map(|role| (role.name.clone(), role.color))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let joined = guild_id
-            .and_then(|guild_id| self.state.member(guild_id, user_id))
-            .and_then(|member| member.joined_at.clone())
-            .and_then(|value| parse_timestamp(&value))
-            .map(|time| time.format("%d %b %Y").to_string());
-        let owner = guild_id.is_some_and(|guild_id| self.state.is_guild_owner(guild_id, user_id));
-        let dm = self
-            .state
-            .channels
-            .iter()
-            .find(|channel| {
-                (channel.kind == Channel::DM || channel.kind == Channel::GROUP_DM)
-                    && (channel.recipient_ids.iter().any(|id| id == user_id)
-                        || channel.recipients.iter().any(|user| user.id == user_id))
-            })
-            .map(|channel| channel.id.clone());
         let header = div()
             .h(px(48.))
             .flex_none()
@@ -292,7 +249,7 @@ impl App {
                     })),
             );
 
-        let mut panel = div()
+        div()
             .id("profile-scroll")
             .flex()
             .flex_col()
@@ -302,53 +259,149 @@ impl App {
             .child(header)
             .child(
                 div()
-                    .m(px(12.))
-                    .rounded(px(10.))
-                    .overflow_hidden()
-                    .bg(rgb(PANEL))
+                    .p(px(12.))
+                    .child(self.render_profile_card(user_id, guild_id, cx)),
+            )
+    }
+
+    pub(super) fn render_profile_popup(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let Some((user_id, guild_id)) = self.profile_popup.clone() else {
+            return div().into_any_element();
+        };
+        let right = if self.right_pane.is_some() {
+            px(272.)
+        } else {
+            px(16.)
+        };
+
+        div()
+            .absolute()
+            .size_full()
+            .child(
+                div()
+                    .id("profile-backdrop")
+                    .absolute()
+                    .size_full()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.profile_popup = None;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top(px(56.))
+                    .right(right)
+                    .w(px(340.))
+                    .shadow_lg()
+                    .child(self.render_profile_card(&user_id, guild_id.as_deref(), cx)),
+            )
+            .into_any_element()
+    }
+
+    fn render_profile_card(
+        &self,
+        user_id: &str,
+        guild_id: Option<&str>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let user = self.state.user(user_id).cloned();
+        let name = match (&user, guild_id) {
+            (Some(user), Some(guild_id)) => self.state.member_display_name(guild_id, user),
+            (Some(user), None) => user.display_name().to_string(),
+            _ => user_id.to_string(),
+        };
+        let username = user
+            .as_ref()
+            .map(|user| format!("@{}", user.username))
+            .unwrap_or_default();
+        let status = self.state.presence(user_id).to_string();
+        let color = guild_id
+            .map(|guild_id| self.state.member_role_color(guild_id, user_id))
+            .unwrap_or(0);
+        let color = if color == 0 { TEXT_BRIGHT } else { color };
+        let roles: Vec<(String, u32)> = guild_id
+            .map(|guild_id| {
+                self.state
+                    .member_roles(guild_id, user_id)
+                    .into_iter()
+                    .map(|role| (role.name.clone(), role.color))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let joined = guild_id
+            .and_then(|guild_id| self.state.member(guild_id, user_id))
+            .and_then(|member| member.joined_at.clone())
+            .and_then(|value| parse_timestamp(&value))
+            .map(|time| time.format("%d.%m.%Y").to_string());
+        let owner = guild_id.is_some_and(|guild_id| self.state.is_guild_owner(guild_id, user_id));
+        let dm = self
+            .state
+            .channels
+            .iter()
+            .find(|channel| {
+                (channel.kind == Channel::DM || channel.kind == Channel::GROUP_DM)
+                    && (channel.recipient_ids.iter().any(|id| id == user_id)
+                        || channel.recipients.iter().any(|user| user.id == user_id))
+            })
+            .map(|channel| channel.id.clone());
+        let is_self = self.state.me.as_ref().is_some_and(|me| me.id == user_id);
+        let current_dm = dm
+            .as_ref()
+            .is_some_and(|id| self.selected_channel.as_ref() == Some(id));
+
+        let mut card = div()
+            .rounded(px(10.))
+            .overflow_hidden()
+            .bg(rgb(PANEL))
+            .border_1()
+            .border_color(rgb(RAIL))
+            .flex()
+            .flex_col()
+            .child(div().h(px(64.)).bg(linear_gradient(
+                90.,
+                linear_color_stop(rgb(ACCENT), 0.),
+                linear_color_stop(rgb(PANEL), 1.),
+            )))
+            .child(
+                div()
+                    .px(px(12.))
+                    .pb(px(12.))
                     .flex()
                     .flex_col()
-                    .child(div().h(px(56.)).bg(rgb(ACCENT)))
+                    .gap(px(6.))
                     .child(
                         div()
-                            .px(px(12.))
-                            .pb(px(12.))
+                            .mt(px(-26.))
+                            .child(large_avatar(user.as_ref(), &name, &status)),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(17.))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(rgb(color))
+                            .child(name),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(rgb(MUTED))
+                            .child(username),
+                    )
+                    .child(
+                        div()
                             .flex()
-                            .flex_col()
+                            .items_center()
                             .gap(px(6.))
-                            .child(div().mt(px(-22.)).child(large_avatar(
-                                user.as_ref(),
-                                &name,
-                                &status,
-                            )))
-                            .child(
-                                div()
-                                    .text_size(px(17.))
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(rgb(color))
-                                    .child(name),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .text_color(rgb(MUTED))
-                                    .child(username),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(6.))
-                                    .text_size(px(12.))
-                                    .text_color(rgb(TEXT))
-                                    .child(presence_dot(&status))
-                                    .child(status_text(&status)),
-                            ),
+                            .text_size(px(12.))
+                            .text_color(rgb(TEXT))
+                            .child(presence_dot(&status))
+                            .child(status_text(&status)),
                     ),
             );
 
         if owner {
-            panel = panel.child(
+            card = card.child(
                 div()
                     .px(px(16.))
                     .pb(px(6.))
@@ -367,7 +420,7 @@ impl App {
         }
 
         if let Some(joined) = joined {
-            panel = panel.child(
+            card = card.child(
                 div()
                     .px(px(16.))
                     .pb(px(10.))
@@ -393,7 +446,7 @@ impl App {
                         .into_any_element()
                 })
                 .collect();
-            panel = panel.child(
+            card = card.child(
                 div()
                     .px(px(16.))
                     .pb(px(12.))
@@ -411,28 +464,43 @@ impl App {
             );
         }
 
-        panel = panel.child(div().px(px(16.)).pb(px(16.)).child(if let Some(dm) = dm {
-            let click_id = dm;
+        card = card.child(div().px(px(16.)).pb(px(16.)).child(if is_self {
             div()
-                .id("profile-message")
-                .w_full()
-                .flex()
-                .justify_center()
-                .py(px(8.))
-                .rounded(px(6.))
-                .bg(rgb(ACCENT))
-                .text_size(px(13.))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(rgb(0xffffff))
-                .cursor_pointer()
-                .hover(|style| style.bg(rgb(0x4752c4)))
-                .child("Написать")
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.select_channel(click_id.clone(), cx);
-                    this.right_pane = None;
-                    this.focus_composer(window, cx);
-                }))
+                .text_size(px(12.))
+                .text_color(rgb(FAINT))
+                .child("Это вы")
                 .into_any_element()
+        } else if let Some(dm) = dm {
+            if current_dm {
+                div()
+                    .text_size(px(12.))
+                    .text_color(rgb(FAINT))
+                    .child("Текущий чат")
+                    .into_any_element()
+            } else {
+                let click_id = dm;
+                div()
+                    .id("profile-message")
+                    .w_full()
+                    .flex()
+                    .justify_center()
+                    .py(px(8.))
+                    .rounded(px(6.))
+                    .bg(rgb(ACCENT))
+                    .text_size(px(13.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(rgb(0xffffff))
+                    .cursor_pointer()
+                    .hover(|style| style.bg(rgb(0x4752c4)))
+                    .child("Написать")
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.select_channel(click_id.clone(), cx);
+                        this.right_pane = None;
+                        this.profile_popup = None;
+                        this.focus_composer(window, cx);
+                    }))
+                    .into_any_element()
+            }
         } else {
             div()
                 .text_size(px(12.))
@@ -441,6 +509,6 @@ impl App {
                 .into_any_element()
         }));
 
-        panel
+        card
     }
 }

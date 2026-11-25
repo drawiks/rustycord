@@ -579,10 +579,7 @@ impl App {
                 .child(author)
                 .on_click(move |_, _, cx| {
                     let _ = weak.update(cx, |app, cx| {
-                        app.right_pane = Some(RightPane::Profile {
-                            user_id: user_id.clone(),
-                            guild_id: guild_id.clone(),
-                        });
+                        app.profile_popup = Some((user_id.clone(), guild_id.clone()));
                         cx.notify();
                     });
                 })
@@ -621,10 +618,7 @@ impl App {
                 .child(avatar(&message.author))
                 .on_click(move |_, _, cx| {
                     let _ = weak.update(cx, |app, cx| {
-                        app.right_pane = Some(RightPane::Profile {
-                            user_id: user_id.clone(),
-                            guild_id: guild_id.clone(),
-                        });
+                        app.profile_popup = Some((user_id.clone(), guild_id.clone()));
                         cx.notify();
                     });
                 })
