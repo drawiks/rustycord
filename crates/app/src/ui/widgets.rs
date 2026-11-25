@@ -108,6 +108,7 @@ pub(super) fn status_text(status: &str) -> &'static str {
         "online" => "В сети",
         "idle" => "Не активен",
         "dnd" => "Не беспокоить",
+        "invisible" => "Невидимка",
         _ => "Не в сети",
     }
 }
@@ -147,6 +148,10 @@ pub(super) fn avatar_url(user: &User) -> String {
             format!("https://cdn.discordapp.com/embed/avatars/{index}.png")
         }
     }
+}
+
+pub(super) fn role_icon_url(role_id: &str, hash: &str) -> String {
+    format!("https://cdn.discordapp.com/role-icons/{role_id}/{hash}.png?size=16")
 }
 
 pub(super) fn guild_icon_url(guild_id: &str, hash: &str) -> String {

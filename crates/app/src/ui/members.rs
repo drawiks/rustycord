@@ -89,6 +89,24 @@ impl App {
                 let activity = self.state.presence_detail(user_id);
                 let streaming = self.state.presence_streaming(user_id);
                 let owner = self.state.is_guild_owner(&guild_id, user_id);
+                let role_badge: Option<AnyElement> = self
+                    .state
+                    .member_top_role(&guild_id, user_id)
+                    .and_then(|role| match (&role.icon, &role.unicode_emoji) {
+                        (Some(icon), _) => Some(
+                            gpui_kit::img(role_icon_url(&role.id, icon))
+                                .size(px(14.))
+                                .rounded(px(3.))
+                                .into_any_element(),
+                        ),
+                        (_, Some(emoji)) => Some(
+                            div()
+                                .text_size(px(13.))
+                                .child(emoji.clone())
+                                .into_any_element(),
+                        ),
+                        _ => None,
+                    });
                 let clan_tag = user
                     .clan
                     .as_ref()
@@ -99,13 +117,18 @@ impl App {
                 let click_id = user_id.clone();
                 let click_guild = guild_id.clone();
 
-                let mut name_line = div().flex().items_center().gap(px(4.)).child(
-                    div()
-                        .text_size(px(15.))
-                        .truncate()
-                        .text_color(rgb(color))
-                        .child(name),
-                );
+                let mut name_line = div()
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .child(
+                        div()
+                            .text_size(px(15.))
+                            .truncate()
+                            .text_color(rgb(color))
+                            .child(name),
+                    )
+                    .children(role_badge);
 
                 if user.bot {
                     name_line = name_line.child(
@@ -147,7 +170,7 @@ impl App {
                             .text_size(px(9.))
                             .font_weight(FontWeight::BOLD)
                             .text_color(rgb(0xffffff))
-                            .child("LIVE"),
+                            .child("В ЭФИРЕ"),
                     );
                 }
 

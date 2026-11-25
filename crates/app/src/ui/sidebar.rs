@@ -517,27 +517,43 @@ impl App {
             .flex()
             .items_center()
             .gap(px(8.))
-            .child(user_avatar(me.as_ref(), &name, &status))
             .child(
                 div()
+                    .id("user-panel")
                     .flex()
-                    .flex_col()
+                    .items_center()
+                    .gap(px(8.))
                     .flex_1()
                     .min_w(px(0.))
+                    .cursor_pointer()
+                    .child(user_avatar(me.as_ref(), &name, &status))
                     .child(
                         div()
-                            .text_size(px(15.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(rgb(TEXT_BRIGHT))
-                            .truncate()
-                            .child(name),
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .child(
+                                div()
+                                    .text_size(px(15.))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(rgb(TEXT_BRIGHT))
+                                    .truncate()
+                                    .child(name),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .text_color(rgb(MUTED))
+                                    .child(status_text(&status)),
+                            ),
                     )
-                    .child(
-                        div()
-                            .text_size(px(12.))
-                            .text_color(rgb(MUTED))
-                            .child(status_text(&status)),
-                    ),
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.status_menu = !this.status_menu;
+                        this.emoji_picker = false;
+                        this.profile_popup = None;
+                        cx.notify();
+                    })),
             )
             .child(
                 div()

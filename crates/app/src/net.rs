@@ -34,6 +34,9 @@ pub enum Command {
         guild_id: String,
         channel_id: String,
     },
+    SetStatus {
+        status: String,
+    },
     UploadFile {
         channel_id: String,
         path: PathBuf,
@@ -147,6 +150,8 @@ async fn run(
                 } = command
                 {
                     gateway.subscribe_members(&guild_id, &channel_id);
+                } else if let Command::SetStatus { status } = command {
+                    gateway.set_status(&status);
                 } else {
                     let client = client.clone();
                     let ui = ui.clone();
@@ -216,6 +221,7 @@ async fn handle(
             client.typing(&channel_id).await?;
         }
         Command::SubscribeMembers { .. } => {}
+        Command::SetStatus { .. } => {}
         Command::UploadFile {
             channel_id,
             path,

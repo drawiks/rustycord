@@ -265,6 +265,23 @@ impl State {
         self.users.get(id)
     }
 
+    pub fn set_status(&mut self, user_id: &str, status: &str) {
+        if let Some(presence) = self.presences.get_mut(user_id) {
+            presence.status = status.to_string();
+            return;
+        }
+        if let Some(user) = self.users.get(user_id).cloned() {
+            self.presences.insert(
+                user_id.to_string(),
+                Presence {
+                    user,
+                    status: status.to_string(),
+                    ..Default::default()
+                },
+            );
+        }
+    }
+
     pub fn presence(&self, id: &str) -> &str {
         self.presences
             .get(id)

@@ -38,6 +38,19 @@ pub struct GatewayHandle {
 }
 
 impl GatewayHandle {
+    pub fn set_status(&self, status: &str) {
+        let payload = json!({
+            "op": 3,
+            "d": {
+                "status": status,
+                "since": 0,
+                "activities": [],
+                "afk": false
+            }
+        });
+        let _ = self.commands.send(payload);
+    }
+
     pub fn subscribe_members(&self, guild_id: &str, channel_id: &str) {
         let mut channels = serde_json::Map::new();
         channels.insert(channel_id.to_string(), json!([[0, 99]]));

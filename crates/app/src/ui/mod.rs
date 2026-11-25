@@ -1,6 +1,7 @@
 mod chat;
 mod login;
 mod members;
+mod overlays;
 mod rail;
 mod sidebar;
 mod widgets;
@@ -66,6 +67,8 @@ pub struct App {
     search_query: String,
     window_title: Option<String>,
     profile_popup: Option<(Id, Option<Id>)>,
+    emoji_picker: bool,
+    status_menu: bool,
     transfers: usize,
     notice: Option<String>,
     pending_token: Option<String>,
@@ -143,6 +146,8 @@ impl App {
             search_query: String::new(),
             window_title: None,
             profile_popup: None,
+            emoji_picker: false,
+            status_menu: false,
             transfers: 0,
             notice: None,
             pending_token: None,
@@ -517,6 +522,30 @@ impl App {
             read.id = channel_id.to_string();
             read.last_message_id = Some(message_id);
         }
+    }
+
+    fn insert_emoji(&mut self, emoji: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let mut value = self.composer.read(cx).value().to_string();
+        value.push_str(emoji);
+        self.composer
+            .update(cx, |composer, cx| composer.set_value(value, window, cx));
+        self.emoji_picker = false;
+        self.focus_composer(window, cx);
+        cx.notify();
+    }
+
+    fn set_status(&mut self, status: &str, cx: &mut Context<Self>) {
+        if let Some(me) = self.state.me.as_ref() {
+            let id = me.id.clone();
+            self.state.set_status(&id, status);
+            if let Some(net) = &self.net {
+                net.send(Command::SetStatus {
+                    status: status.to_string(),
+                });
+            }
+        }
+        self.status_menu = false;
+        cx.notify();
     }
 
     fn pick_files(&mut self, cx: &mut Context<Self>) {
@@ -1103,6 +1132,14 @@ impl App {
 
         if self.profile_popup.is_some() {
             root = root.child(self.render_profile_popup(cx));
+        }
+
+        if self.emoji_picker {
+            root = root.child(self.render_emoji_picker(cx));
+        }
+
+        if self.status_menu {
+            root = root.child(self.render_status_menu(cx));
         }
 
         if let Some(url) = self.image_viewer.clone() {

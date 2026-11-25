@@ -306,6 +306,12 @@ pub struct EmbedField {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
+pub struct EmbedFooter {
+    #[serde(default)]
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct Embed {
     #[serde(default)]
     pub title: Option<String>,
@@ -323,6 +329,8 @@ pub struct Embed {
     pub thumbnail: Option<EmbedImage>,
     #[serde(default)]
     pub fields: Vec<EmbedField>,
+    #[serde(default)]
+    pub footer: Option<EmbedFooter>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

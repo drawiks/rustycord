@@ -332,11 +332,31 @@ impl App {
                         .flex()
                         .items_center()
                         .gap(px(10.))
-                        .child(
-                            gpui_kit::component::Icon::new(IconName::FileText)
-                                .size(px(22.))
-                                .text_color(rgb(MUTED)),
-                        )
+                        .child({
+                            let extension = attachment
+                                .filename
+                                .rsplit('.')
+                                .next()
+                                .unwrap_or("")
+                                .to_uppercase();
+                            let label: String =
+                                if extension.is_empty() || extension == attachment.filename {
+                                    "FILE".to_string()
+                                } else {
+                                    extension.chars().take(4).collect()
+                                };
+                            div()
+                                .size(px(40.))
+                                .rounded(px(6.))
+                                .bg(rgb(RAIL))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .text_size(px(10.))
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(rgb(LINK))
+                                .child(label)
+                        })
                         .child(
                             div()
                                 .flex()
@@ -393,28 +413,79 @@ impl App {
         }
 
         for embed in &message.embeds {
-            if let Some(title) = &embed.title {
-                content = content.child(
+            let embed_color = embed.color.unwrap_or(ACCENT);
+            let mut card = div()
+                .mt(px(4.))
+                .max_w(px(520.))
+                .rounded(px(6.))
+                .bg(rgb(SIDEBAR))
+                .border_l(px(3.))
+                .border_color(rgb(embed_color))
+                .px(px(12.))
+                .py(px(8.))
+                .flex()
+                .flex_col()
+                .gap(px(4.));
+
+            if let Some(author) = &embed.author {
+                card = card.child(
                     div()
-                        .text_size(px(13.))
+                        .text_size(px(12.))
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(rgb(TEXT))
+                        .child(author.name.clone()),
+                );
+            }
+            if let Some(title) = &embed.title {
+                card = card.child(
+                    div()
+                        .text_size(px(14.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(rgb(LINK))
                         .child(title.clone()),
                 );
             }
             if let Some(description) = &embed.description {
-                content = content.child(
+                card = card.child(
                     div()
                         .text_size(px(13.))
-                        .text_color(rgb(MUTED))
+                        .text_color(rgb(TEXT))
                         .child(description.clone()),
                 );
+            }
+            if !embed.fields.is_empty() {
+                let fields: Vec<AnyElement> = embed
+                    .fields
+                    .iter()
+                    .map(|field| {
+                        div()
+                            .flex()
+                            .flex_col()
+                            .min_w(px(120.))
+                            .max_w(px(240.))
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(rgb(TEXT))
+                                    .child(field.name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .text_color(rgb(MUTED))
+                                    .child(field.value.clone()),
+                            )
+                            .into_any_element()
+                    })
+                    .collect();
+                card = card.child(div().flex().flex_wrap().gap(px(8.)).children(fields));
             }
             if let Some(image) = &embed.image {
                 let url = image.url.clone();
                 let click_url = url.clone();
                 let (image_w, image_h) = fit_size(image.width, image.height, 420., 320.);
-                content = content.child(
+                card = card.child(
                     div()
                         .id(gpui_kit::SharedString::from(format!(
                             "embed-image-{}",
@@ -443,7 +514,7 @@ impl App {
             }
             if let Some(thumbnail) = &embed.thumbnail {
                 let (image_w, image_h) = fit_size(thumbnail.width, thumbnail.height, 80., 80.);
-                content = content.child(
+                card = card.child(
                     div().mt(px(4.)).child(
                         gpui_kit::img(thumbnail.url.clone())
                             .w(px(image_w))
@@ -453,6 +524,16 @@ impl App {
                     ),
                 );
             }
+            if let Some(footer) = &embed.footer {
+                card = card.child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(rgb(FAINT))
+                        .child(footer.text.clone()),
+                );
+            }
+
+            content = content.child(card);
         }
 
         if !message.reactions.is_empty() {
@@ -565,6 +646,26 @@ impl App {
             ));
         }
 
+        let role_badge: Option<AnyElement> = message.guild_id.as_ref().and_then(|guild_id| {
+            self.state
+                .member_top_role(guild_id, &message.author.id)
+                .and_then(|role| match (&role.icon, &role.unicode_emoji) {
+                    (Some(icon), _) => Some(
+                        gpui_kit::img(role_icon_url(&role.id, icon))
+                            .size(px(14.))
+                            .rounded(px(3.))
+                            .into_any_element(),
+                    ),
+                    (_, Some(emoji)) => Some(
+                        div()
+                            .text_size(px(13.))
+                            .child(emoji.clone())
+                            .into_any_element(),
+                    ),
+                    _ => None,
+                })
+        });
+
         let mut header = div().flex().items_baseline().gap(px(8.)).child({
             let weak = entity.clone();
             let user_id = message.author.id.clone();
@@ -577,6 +678,7 @@ impl App {
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(author_color))
                 .child(author)
+                .children(role_badge)
                 .on_click(move |_, _, cx| {
                     let _ = weak.update(cx, |app, cx| {
                         app.profile_popup = Some((user_id.clone(), guild_id.clone()));
