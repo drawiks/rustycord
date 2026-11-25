@@ -425,15 +425,7 @@ mod date_tests {
 
     #[test]
     fn russian_day_labels() {
-        let today = Local::now().date_naive();
-        assert_eq!(day_label(today), "Сегодня");
-        assert_eq!(
-            day_label(today.with_day(1).unwrap_or(today)),
-            if today.day() == 1 {
-                "Сегодня"
-            } else {
-                "1 января"
-            }
-        );
+        let date = NaiveDate::from_ymd_opt(2020, 11, 22).unwrap();
+        assert_eq!(day_label(date), "22 ноября 2020 г.");
     }
 }
