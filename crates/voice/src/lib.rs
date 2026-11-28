@@ -1,3 +1,4 @@
+mod audio;
 mod crypto;
 mod dave;
 mod discovery;
@@ -5,6 +6,7 @@ mod error;
 mod rtp;
 mod session;
 
+pub use audio::{AudioEngine, input_devices, output_devices};
 pub use crypto::{CryptoMode, TransportCrypto};
 pub use discovery::{
     DiscoveryResponse, discovery_request, parse_discovery, parse_ping, ping_request,

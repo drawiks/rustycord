@@ -14,7 +14,7 @@ DM list with avatars and presence, **virtualized** message transcript (tail-foll
 sending, replies, editing/deleting, live reactions, markdown with clickable links/mentions, unread/mention badges,
 date/unread separators, typing indicator, member list with roles and role colors, user profile panel,
 file uploads (picker and drag & drop), file cards with download, image attachments with a full-size viewer.
-Token is stored in the OS keyring. No voice, search or notifications yet.
+Token is stored in the OS keyring. Voice channels and DM calls use a custom Discord voice client (UDP, DAVE end-to-end encryption, Opus). Search is local; OS notifications are not implemented yet.
 
 ## Build
 
@@ -38,7 +38,7 @@ The binary is `target\release\rustycord.exe`.
 
 ```bash
 sudo apt-get install pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb1-dev \
-  libfontconfig1-dev libfreetype-dev libclang-dev libvulkan-dev libegl-dev
+  libfontconfig1-dev libfreetype-dev libclang-dev libvulkan-dev libegl-dev libasound2-dev
 cargo build --release -p rustycord
 ```
 

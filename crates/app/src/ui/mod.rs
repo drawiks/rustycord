@@ -84,6 +84,11 @@ pub struct App {
     muted: bool,
     deafened: bool,
     incoming_call: Option<Call>,
+    settings_open: bool,
+    input_device: Option<String>,
+    output_device: Option<String>,
+    input_devices: Vec<String>,
+    output_devices: Vec<String>,
     subscriptions: Vec<Subscription>,
 }
 
@@ -107,6 +112,7 @@ impl App {
                 .placeholder("Поиск")
                 .clean_on_escape()
         });
+        let (input_device, output_device) = load_audio_devices();
         let (ui_tx, mut ui_rx) = unbounded_channel();
         let debug = debug_render();
 
@@ -177,6 +183,11 @@ impl App {
             muted: false,
             deafened: false,
             incoming_call: None,
+            settings_open: false,
+            input_device,
+            output_device,
+            input_devices: Vec::new(),
+            output_devices: Vec::new(),
             subscriptions: Vec::new(),
         };
 
@@ -436,6 +447,8 @@ impl App {
                 guild_id: guild_id.clone(),
                 channel_id: channel_id.clone(),
                 ring,
+                input_device: self.input_device.clone(),
+                output_device: self.output_device.clone(),
             });
         }
         self.voice = Some(VoiceUi { channel_id });
@@ -476,6 +489,39 @@ impl App {
             net.send(Command::SetMute {
                 mute: self.muted,
                 deafen: self.deafened,
+            });
+        }
+        cx.notify();
+    }
+
+    fn open_settings(&mut self, cx: &mut Context<Self>) {
+        self.input_devices = rustycord_voice::input_devices();
+        self.output_devices = rustycord_voice::output_devices();
+        self.settings_open = true;
+        self.status_menu = false;
+        self.emoji_picker = false;
+        cx.notify();
+    }
+
+    fn select_input_device(&mut self, name: Option<String>, cx: &mut Context<Self>) {
+        self.input_device = name;
+        save_audio_devices(&self.input_device, &self.output_device);
+        if let Some(net) = &self.net {
+            net.send(Command::SetDevices {
+                input: self.input_device.clone(),
+                output: self.output_device.clone(),
+            });
+        }
+        cx.notify();
+    }
+
+    fn select_output_device(&mut self, name: Option<String>, cx: &mut Context<Self>) {
+        self.output_device = name;
+        save_audio_devices(&self.input_device, &self.output_device);
+        if let Some(net) = &self.net {
+            net.send(Command::SetDevices {
+                input: self.input_device.clone(),
+                output: self.output_device.clone(),
             });
         }
         cx.notify();
@@ -1322,6 +1368,10 @@ impl App {
             root = root.child(self.render_status_menu(cx));
         }
 
+        if self.settings_open {
+            root = root.child(self.render_settings(cx));
+        }
+
         if let Some(url) = self.image_viewer.clone() {
             root = root.child(
                 div()
@@ -1370,6 +1420,48 @@ impl Render for App {
             Screen::Login | Screen::Connecting => self.render_login(cx).into_any_element(),
             Screen::Main => self.render_main(cx).into_any_element(),
         }
+    }
+}
+
+fn audio_config_path() -> Option<std::path::PathBuf> {
+    dirs::config_dir().map(|dir| dir.join("rustycord").join("audio.conf"))
+}
+
+fn load_audio_devices() -> (Option<String>, Option<String>) {
+    let Some(path) = audio_config_path() else {
+        return (None, None);
+    };
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return (None, None);
+    };
+    let mut lines = text.lines();
+    let input = lines
+        .next()
+        .filter(|line| !line.is_empty())
+        .map(str::to_string);
+    let output = lines
+        .next()
+        .filter(|line| !line.is_empty())
+        .map(str::to_string);
+    (input, output)
+}
+
+fn save_audio_devices(input: &Option<String>, output: &Option<String>) {
+    let Some(path) = audio_config_path() else {
+        return;
+    };
+    if let Some(parent) = path.parent()
+        && std::fs::create_dir_all(parent).is_err()
+    {
+        return;
+    }
+    let text = format!(
+        "{}\n{}\n",
+        input.as_deref().unwrap_or_default(),
+        output.as_deref().unwrap_or_default()
+    );
+    if let Err(error) = std::fs::write(path, text) {
+        tracing::warn!("could not save audio devices: {error}");
     }
 }
 

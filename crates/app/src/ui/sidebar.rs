@@ -694,12 +694,20 @@ impl App {
                             )
                             .on_click(cx.listener(|this, _, _, cx| this.toggle_deafen(cx))),
                     )
-                    .child(panel_button(
-                        "panel-settings",
-                        IconName::Settings,
-                        "Настройки скоро",
-                        cx,
-                    ))
+                    .child(
+                        div()
+                            .id("panel-settings")
+                            .size(px(28.))
+                            .rounded(px(4.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_color(rgb(MUTED))
+                            .cursor_pointer()
+                            .hover(|style| style.bg(rgb(RAIL_HOVER)).text_color(rgb(TEXT_BRIGHT)))
+                            .child(gpui_kit::component::Icon::new(IconName::Settings).size(px(16.)))
+                            .on_click(cx.listener(|this, _, _, cx| this.open_settings(cx))),
+                    )
                     .child(
                         div()
                             .id("logout")
@@ -716,27 +724,4 @@ impl App {
                     ),
             )
     }
-}
-
-fn panel_button(
-    id: &'static str,
-    icon: IconName,
-    notice: &'static str,
-    cx: &mut Context<App>,
-) -> impl IntoElement {
-    div()
-        .id(id)
-        .size(px(28.))
-        .rounded(px(4.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .text_color(rgb(MUTED))
-        .cursor_pointer()
-        .hover(|style| style.bg(rgb(RAIL_HOVER)).text_color(rgb(TEXT_BRIGHT)))
-        .child(gpui_kit::component::Icon::new(icon).size(px(16.)))
-        .on_click(cx.listener(move |this, _, _, cx| {
-            this.notice = Some(notice.to_string());
-            cx.notify();
-        }))
 }

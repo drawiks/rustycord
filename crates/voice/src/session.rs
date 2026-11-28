@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     net::IpAddr,
     sync::Once,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -9,6 +9,7 @@ use futures_util::{
     SinkExt, StreamExt,
     stream::{SplitSink, SplitStream},
 };
+use opusic_c::{Application, Bitrate, Channels, Decoder, Encoder, InbandFec, SampleRate};
 use serde_json::{Value, json};
 use tokio::{
     net::{TcpStream, UdpSocket},
@@ -19,7 +20,8 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungsten
 use tracing::{debug, info, trace, warn};
 
 use crate::{
-    CryptoMode, Error, OPUS_PAYLOAD_TYPE, Result, RtpHeader, TransportCrypto,
+    AudioEngine, CHANNELS, CryptoMode, Error, FRAME_SAMPLES, OPUS_PAYLOAD_TYPE, Result, RtpHeader,
+    TransportCrypto,
     dave::{Dave, DaveAction},
     discovery::{self, discovery_request, parse_discovery, parse_ping, ping_request},
 };
@@ -29,6 +31,7 @@ type Write = SplitSink<Ws, Message>;
 type Read = SplitStream<Ws>;
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
+const FRAME_VALUES: usize = FRAME_SAMPLES * CHANNELS;
 
 #[derive(Clone, Debug)]
 pub struct VoiceSession {
@@ -40,6 +43,8 @@ pub struct VoiceSession {
     pub endpoint: String,
     pub self_mute: bool,
     pub self_deaf: bool,
+    pub input_device: Option<String>,
+    pub output_device: Option<String>,
 }
 
 #[derive(Debug)]
@@ -47,6 +52,10 @@ pub enum VoiceCommand {
     Leave,
     SetMute(bool),
     SetDeafen(bool),
+    SetDevices {
+        input: Option<String>,
+        output: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -90,6 +99,12 @@ impl VoiceHandle {
 
     pub fn set_deafen(&self, deafen: bool) {
         let _ = self.commands.send(VoiceCommand::SetDeafen(deafen));
+    }
+
+    pub fn set_devices(&self, input: Option<String>, output: Option<String>) {
+        let _ = self
+            .commands
+            .send(VoiceCommand::SetDevices { input, output });
     }
 }
 
@@ -227,7 +242,7 @@ async fn connect_once(
     let description = &description["d"];
     let secret: Vec<u8> = serde_json::from_value(description["secret_key"].clone())
         .map_err(|_| Error::Protocol("voice session missing secret key".to_string()))?;
-    let crypto = TransportCrypto::new(mode, &secret)?;
+    let mut crypto = TransportCrypto::new(mode, &secret)?;
     let dave_version = description["dave_protocol_version"].as_u64().unwrap_or(0) as u16;
     let mut dave = if dave_version > 0 {
         let channel_id = session
@@ -245,6 +260,23 @@ async fn connect_once(
     if let (Some(dave), Some(external)) = (&mut dave, &external_sender) {
         dave.set_external_sender(external);
     }
+    let audio = AudioEngine::start(session.input_device.clone(), session.output_device.clone());
+    let mut encoder = Encoder::new(Channels::Stereo, SampleRate::Hz48000, Application::Voip).ok();
+    if let Some(encoder) = &mut encoder {
+        let _ = encoder.set_bitrate(Bitrate::Value(64_000));
+        let _ = encoder.set_inband_fec(InbandFec::Mode1);
+        let _ = encoder.set_packet_loss(10);
+    }
+    let mut muted = session.self_mute;
+    let mut deafened = session.self_deaf;
+    let mut speaking_flag = false;
+    let mut silence_frames = 0u8;
+    let mut sequence = rand::random::<u16>();
+    let mut timestamp = rand::random::<u32>();
+    let mut decoders: HashMap<u64, Decoder> = HashMap::new();
+    let mut jitter: HashMap<u64, VecDeque<Vec<f32>>> = HashMap::new();
+    let mut audio_timer = time::interval(Duration::from_millis(20));
+    audio_timer.set_missed_tick_behavior(time::MissedTickBehavior::Delay);
     let _ = events.send(VoiceEvent::Ready {
         mode: mode.name().to_string(),
         dave: dave_version > 0,
@@ -447,12 +479,46 @@ async fn connect_once(
                 let Some(user_id) = ssrc_users.get(&decrypted_header.ssrc) else {
                     continue;
                 };
-                let opus = match (dave.as_mut(), user_id.parse::<u64>().ok()) {
-                    (Some(dave), Some(user_id)) => dave
+                let Ok(user_id) = user_id.parse::<u64>() else {
+                    continue;
+                };
+                let opus = match dave.as_mut() {
+                    Some(dave) => dave
                         .decrypt_opus(user_id, payload)
                         .unwrap_or_else(|| payload.to_vec()),
-                    _ => payload.to_vec(),
+                    None => payload.to_vec(),
                 };
+                if !decoders.contains_key(&user_id) {
+                    match Decoder::new(Channels::Stereo, SampleRate::Hz48000) {
+                        Ok(decoder) => {
+                            decoders.insert(user_id, decoder);
+                        }
+                        Err(error) => {
+                            debug!("voice decoder failed: {error:?}");
+                            continue;
+                        }
+                    }
+                }
+                let Some(decoder) = decoders.get_mut(&user_id) else {
+                    continue;
+                };
+                let mut pcm = vec![0f32; FRAME_VALUES * 6];
+                let Ok(decoded) = decoder.decode_float_to_slice(&opus, &mut pcm, false) else {
+                    continue;
+                };
+                let values = if decoded <= FRAME_SAMPLES {
+                    decoded * 2
+                } else {
+                    decoded
+                };
+                pcm.truncate(values.min(FRAME_VALUES));
+                if pcm.len() >= 2 {
+                    let queue = jitter.entry(user_id).or_default();
+                    queue.push_back(pcm);
+                    while queue.len() > 8 {
+                        queue.pop_front();
+                    }
+                }
                 trace!(
                     "voice audio ssrc={} user={} bytes={}",
                     decrypted_header.ssrc,
@@ -460,10 +526,112 @@ async fn connect_once(
                     opus.len()
                 );
             }
+            _ = audio_timer.tick() => {
+                if muted || deafened {
+                    let _ = audio.take_frame();
+                    if speaking_flag {
+                        let _ = send_speaking(&mut write, ssrc, false).await?;
+                        speaking_flag = false;
+                    }
+                } else if let Some(frame) = audio.take_frame() {
+                    let energy = (frame.iter().map(|sample| sample * sample).sum::<f32>()
+                        / frame.len() as f32)
+                        .sqrt();
+                    if energy > 0.012 {
+                        if !speaking_flag {
+                            send_speaking(&mut write, ssrc, true).await?;
+                            speaking_flag = true;
+                        }
+                        silence_frames = 0;
+                        if let Some(encoder) = &mut encoder {
+                            send_frame(
+                                encoder,
+                                &mut dave,
+                                &mut crypto,
+                                &udp,
+                                &frame,
+                                ssrc,
+                                sequence,
+                                timestamp,
+                            )
+                            .await?;
+                            sequence = sequence.wrapping_add(1);
+                            timestamp = timestamp.wrapping_add(FRAME_SAMPLES as u32);
+                        }
+                    } else if speaking_flag {
+                        silence_frames += 1;
+                        let silence = vec![0f32; FRAME_VALUES];
+                        if let Some(encoder) = &mut encoder {
+                            send_frame(
+                                encoder,
+                                &mut dave,
+                                &mut crypto,
+                                &udp,
+                                &silence,
+                                ssrc,
+                                sequence,
+                                timestamp,
+                            )
+                            .await?;
+                            sequence = sequence.wrapping_add(1);
+                            timestamp = timestamp.wrapping_add(FRAME_SAMPLES as u32);
+                        }
+                        if silence_frames >= 5 {
+                            send_speaking(&mut write, ssrc, false).await?;
+                            speaking_flag = false;
+                            silence_frames = 0;
+                        }
+                    }
+                }
+
+                if deafened {
+                    jitter.clear();
+                } else {
+                    let mut mixed = vec![0f32; FRAME_VALUES];
+                    let mut any = false;
+                    for queue in jitter.values_mut() {
+                        if let Some(frame) = queue.pop_front() {
+                            for (target, source) in mixed.iter_mut().zip(frame.iter()) {
+                                *target += *source;
+                            }
+                            any = true;
+                        }
+                    }
+                    if any {
+                        for sample in &mut mixed {
+                            *sample = (*sample * 0.8).clamp(-1.0, 1.0);
+                        }
+                        audio.push_frame(&mixed);
+                    }
+                    jitter.retain(|_, queue| !queue.is_empty());
+                }
+            }
             command = commands.recv() => {
                 match command {
-                    Some(VoiceCommand::Leave) | None => return Ok(Outcome::Left),
-                    Some(VoiceCommand::SetMute(_) | VoiceCommand::SetDeafen(_)) => {}
+                    Some(VoiceCommand::Leave) | None => {
+                        let _ = send_speaking(&mut write, ssrc, false).await;
+                        return Ok(Outcome::Left);
+                    }
+                    Some(VoiceCommand::SetMute(value)) => {
+                        muted = value;
+                        if muted && speaking_flag {
+                            let _ = send_speaking(&mut write, ssrc, false).await;
+                            speaking_flag = false;
+                        }
+                    }
+                    Some(VoiceCommand::SetDeafen(value)) => {
+                        deafened = value;
+                        if deafened {
+                            jitter.clear();
+                            if speaking_flag {
+                                let _ = send_speaking(&mut write, ssrc, false).await;
+                                speaking_flag = false;
+                            }
+                        }
+                    }
+                    Some(VoiceCommand::SetDevices { input, output }) => {
+                        audio.set_devices(input, output);
+                    }
                 }
             }
         }
@@ -500,6 +668,42 @@ async fn send_speaking(write: &mut Write, ssrc: u32, speaking: bool) -> Result<(
         }),
     )
     .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn send_frame(
+    encoder: &mut Encoder,
+    dave: &mut Option<Dave>,
+    crypto: &mut TransportCrypto,
+    udp: &UdpSocket,
+    pcm: &[f32],
+    ssrc: u32,
+    sequence: u16,
+    timestamp: u32,
+) -> Result<()> {
+    let mut packet = [0u8; 4000];
+    let encoded = match encoder.encode_float_to_slice(pcm, &mut packet) {
+        Ok(encoded) => encoded,
+        Err(error) => {
+            debug!("voice encode failed: {error:?}");
+            return Ok(());
+        }
+    };
+    let opus = &packet[..encoded];
+    let payload = match dave {
+        Some(dave) => dave.encrypt_opus(opus).unwrap_or_else(|| opus.to_vec()),
+        None => opus.to_vec(),
+    };
+    let header = RtpHeader {
+        payload_type: OPUS_PAYLOAD_TYPE,
+        sequence,
+        timestamp,
+        ssrc,
+    };
+    let packet = crate::rtp::build(&header, &payload);
+    let encrypted = crypto.encrypt(&packet[..12], &packet[12..])?;
+    udp.send(&encrypted).await?;
+    Ok(())
 }
 
 async fn send_actions(write: &mut Write, actions: Vec<DaveAction>) -> Result<()> {

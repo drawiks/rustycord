@@ -63,6 +63,12 @@ pub enum Command {
         guild_id: Option<String>,
         channel_id: String,
         ring: bool,
+        input_device: Option<String>,
+        output_device: Option<String>,
+    },
+    SetDevices {
+        input: Option<String>,
+        output: Option<String>,
     },
     VoiceLeave,
     SetMute {
@@ -102,6 +108,8 @@ struct PendingVoice {
     ring: bool,
     self_mute: bool,
     self_deaf: bool,
+    input_device: Option<String>,
+    output_device: Option<String>,
 }
 
 struct ActiveVoice {
@@ -223,7 +231,7 @@ async fn run(
                         gateway.subscribe_members(&guild_id, &channel_id);
                     }
                     Command::SetStatus { status } => gateway.set_status(&status),
-                    Command::VoiceJoin { guild_id, channel_id, ring } => {
+                    Command::VoiceJoin { guild_id, channel_id, ring, input_device, output_device } => {
                         if let Some(handle) = voice.take() {
                             handle.leave();
                         }
@@ -235,6 +243,8 @@ async fn run(
                             ring,
                             self_mute: false,
                             self_deaf: false,
+                            input_device,
+                            output_device,
                         });
                         active = None;
                         gateway.voice_state(pending.as_ref().and_then(|p| p.guild_id.as_deref()), Some(&channel_id), false, false);
@@ -259,6 +269,11 @@ async fn run(
                         if let Some(handle) = &voice {
                             handle.set_mute(mute);
                             handle.set_deafen(deafen);
+                        }
+                    }
+                    Command::SetDevices { input, output } => {
+                        if let Some(handle) = &voice {
+                            handle.set_devices(input, output);
                         }
                     }
                     Command::CallDecline { channel_id } => {
@@ -304,6 +319,8 @@ fn start_voice(
         endpoint,
         self_mute: pending.self_mute,
         self_deaf: pending.self_deaf,
+        input_device: pending.input_device.clone(),
+        output_device: pending.output_device.clone(),
     };
     let ring = pending.ring;
     let channel_id = pending.channel_id.clone();
@@ -435,6 +452,7 @@ async fn handle(
         Command::VoiceJoin { .. }
         | Command::VoiceLeave
         | Command::SetMute { .. }
+        | Command::SetDevices { .. }
         | Command::CallDecline { .. } => {}
     }
     Ok(())

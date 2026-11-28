@@ -54,7 +54,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb1-dev libfontconfig1-dev libfreetype-dev libclang-dev libvulkan-dev libegl-dev
+          sudo apt-get install -y pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb1-dev libfontconfig1-dev libfreetype-dev libclang-dev libvulkan-dev libegl-dev libasound2-dev
       - name: Clippy
         run: cargo clippy -p rustycord-discord -p rustycord-voice --all-targets -- -D warnings
       - name: Test
@@ -105,6 +105,6 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb1-dev libfontconfig1-dev libfreetype-dev libclang-dev libvulkan-dev libegl-dev
+          sudo apt-get install -y pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcb1-dev libfontconfig1-dev libfreetype-dev libclang-dev libvulkan-dev libegl-dev libasound2-dev
       - name: Clippy
         run: cargo clippy -p rustycord --all-targets -- -D warnings

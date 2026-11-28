@@ -181,6 +181,104 @@ impl App {
             .into_any_element()
     }
 
+    pub(super) fn render_settings(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let mut card = div()
+            .w(px(460.))
+            .max_h(px(600.))
+            .p(px(18.))
+            .rounded(px(12.))
+            .bg(rgb(SIDEBAR))
+            .border_1()
+            .border_color(rgb(RAIL))
+            .shadow_lg()
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_size(px(18.))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(rgb(TEXT_BRIGHT))
+                            .child("Голос и видео"),
+                    )
+                    .child(
+                        div()
+                            .id("settings-close")
+                            .size(px(28.))
+                            .rounded(px(4.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_color(rgb(MUTED))
+                            .cursor_pointer()
+                            .hover(|style| style.bg(rgb(RAIL_HOVER)).text_color(rgb(TEXT_BRIGHT)))
+                            .child(gpui_kit::component::Icon::new(IconName::X).size(px(16.)))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.settings_open = false;
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .child(section_label("УСТРОЙСТВО ВВОДА"))
+            .child(device_option(
+                "По умолчанию".to_string(),
+                None,
+                self.input_device.is_none(),
+                true,
+                cx,
+            ));
+
+        for name in self.input_devices.clone() {
+            let selected = self.input_device.as_deref() == Some(name.as_str());
+            card = card.child(device_option(name.clone(), Some(name), selected, true, cx));
+        }
+        if self.input_devices.is_empty() {
+            card = card.child(hint("Устройства ввода не найдены"));
+        }
+
+        card = card
+            .child(section_label("УСТРОЙСТВО ВЫВОДА"))
+            .child(device_option(
+                "По умолчанию".to_string(),
+                None,
+                self.output_device.is_none(),
+                false,
+                cx,
+            ));
+        for name in self.output_devices.clone() {
+            let selected = self.output_device.as_deref() == Some(name.as_str());
+            card = card.child(device_option(name.clone(), Some(name), selected, false, cx));
+        }
+        if self.output_devices.is_empty() {
+            card = card.child(hint("Устройства вывода не найдены"));
+        }
+
+        div()
+            .absolute()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .id("settings-backdrop")
+                    .absolute()
+                    .size_full()
+                    .bg(gpui_kit::rgba(0x00000099))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.settings_open = false;
+                        cx.notify();
+                    })),
+            )
+            .child(card)
+            .into_any_element()
+    }
+
     pub(super) fn render_status_menu(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let current = self
             .state
@@ -268,11 +366,7 @@ impl App {
                             .text_color(rgb(TEXT))
                             .child("Настройки"),
                     )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.notice = Some("Настройки скоро".to_string());
-                        this.status_menu = false;
-                        cx.notify();
-                    })),
+                    .on_click(cx.listener(|this, _, _, cx| this.open_settings(cx))),
             )
             .child(
                 div()
@@ -315,4 +409,68 @@ impl App {
             .child(menu)
             .into_any_element()
     }
+}
+
+fn section_label(text: &'static str) -> impl IntoElement {
+    div()
+        .mt(px(8.))
+        .text_size(px(11.))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(rgb(MUTED))
+        .child(text)
+}
+
+fn hint(text: &'static str) -> impl IntoElement {
+    div()
+        .px(px(8.))
+        .py(px(6.))
+        .text_size(px(12.))
+        .text_color(rgb(FAINT))
+        .child(text)
+}
+
+fn device_option(
+    label: String,
+    value: Option<String>,
+    selected: bool,
+    input: bool,
+    cx: &mut Context<App>,
+) -> AnyElement {
+    let click_value = value.clone();
+    div()
+        .id(SharedString::from(format!(
+            "{}-{}",
+            if input { "input" } else { "output" },
+            value.as_deref().unwrap_or("default")
+        )))
+        .flex()
+        .items_center()
+        .justify_between()
+        .px(px(8.))
+        .py(px(7.))
+        .rounded(px(4.))
+        .cursor_pointer()
+        .hover(|style| style.bg(rgb(RAIL_HOVER)))
+        .child(
+            div()
+                .text_size(px(13.))
+                .text_color(rgb(if selected { TEXT_BRIGHT } else { TEXT }))
+                .child(label),
+        )
+        .child(if selected {
+            gpui_kit::component::Icon::new(IconName::Check)
+                .size(px(15.))
+                .text_color(rgb(ACCENT))
+                .into_any_element()
+        } else {
+            div().size(px(15.)).into_any_element()
+        })
+        .on_click(cx.listener(move |this, _, _, cx| {
+            if input {
+                this.select_input_device(click_value.clone(), cx);
+            } else {
+                this.select_output_device(click_value.clone(), cx);
+            }
+        }))
+        .into_any_element()
 }
