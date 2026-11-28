@@ -18,7 +18,7 @@ Token is stored in the OS keyring. No voice, search or notifications yet.
 
 ## Build
 
-Requires the pinned Rust nightly `nightly-2026-11-27` (1.102.0-nightly; stable 1.102 is expected on 2027-02-04).
+Requires the pinned Rust nightly `nightly-2026-11-26` (1.102.0-nightly; stable 1.102 is expected on 2027-02-04).
 
 ### Windows
 
