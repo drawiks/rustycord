@@ -9,7 +9,7 @@ use std::{
 };
 
 use cpal::{
-    SampleFormat, SampleRate, SupportedStreamConfig,
+    SampleFormat, SupportedStreamConfig,
     platform::{Device, Host, Stream},
     traits::{DeviceTrait, HostTrait, StreamTrait},
 };
@@ -95,7 +95,7 @@ fn devices(input: bool) -> Vec<String> {
     if input {
         if let Ok(devices) = host.input_devices() {
             for device in devices {
-                if let Ok(name) = device.name()
+                if let Some(name) = device_name(&device)
                     && !name.is_empty()
                     && !names.contains(&name)
                 {
@@ -105,7 +105,7 @@ fn devices(input: bool) -> Vec<String> {
         }
     } else if let Ok(devices) = host.output_devices() {
         for device in devices {
-            if let Ok(name) = device.name()
+            if let Some(name) = device_name(&device)
                 && !name.is_empty()
                 && !names.contains(&name)
             {
@@ -154,7 +154,7 @@ fn build_input(
     let config = supported.config();
     let format = supported.sample_format();
     let channels = config.channels as usize;
-    let rate = config.sample_rate.0;
+    let rate = config.sample_rate;
     let buffer = capture.clone();
     let stream = device
         .build_input_stream_raw(
@@ -184,7 +184,7 @@ fn build_input(
     }
     info!(
         "audio input: {} @ {rate} Hz",
-        device.name().unwrap_or_default()
+        device_name(&device).unwrap_or_default()
     );
     Some(stream)
 }
@@ -199,7 +199,7 @@ fn build_output(
     let config = supported.config();
     let format = supported.sample_format();
     let channels = config.channels as usize;
-    let rate = config.sample_rate.0;
+    let rate = config.sample_rate;
     let sample_size = sample_size(format);
     let buffer = playback.clone();
     let stream = device
@@ -238,9 +238,16 @@ fn build_output(
     }
     info!(
         "audio output: {} @ {rate} Hz",
-        device.name().unwrap_or_default()
+        device_name(&device).unwrap_or_default()
     );
     Some(stream)
+}
+
+fn device_name(device: &Device) -> Option<String> {
+    device
+        .description()
+        .ok()
+        .map(|description| description.name().to_string())
 }
 
 fn pick_device(host: &Host, name: Option<&str>, input: bool) -> Option<Device> {
@@ -251,7 +258,7 @@ fn pick_device(host: &Host, name: Option<&str>, input: bool) -> Option<Device> {
             Box::new(host.output_devices().ok()?)
         };
         for device in devices {
-            if device.name().ok().as_deref() == Some(name) {
+            if device_name(&device).as_deref() == Some(name) {
                 return Some(device);
             }
         }
@@ -268,10 +275,10 @@ fn input_config(device: &Device) -> Option<SupportedStreamConfig> {
     let mut fallback = None;
     if let Ok(ranges) = device.supported_input_configs() {
         for range in ranges {
-            if range.channels() > 2 || !range.contains_rate(SampleRate(SAMPLE_RATE)) {
+            if range.channels() > 2 || !range.contains_rate(SAMPLE_RATE) {
                 continue;
             }
-            let config = range.with_sample_rate(SampleRate(SAMPLE_RATE));
+            let config = range.with_sample_rate(SAMPLE_RATE);
             if config.channels() == 2
                 && matches!(
                     config.sample_format(),
@@ -290,10 +297,10 @@ fn output_config(device: &Device) -> Option<SupportedStreamConfig> {
     let mut fallback = None;
     if let Ok(ranges) = device.supported_output_configs() {
         for range in ranges {
-            if range.channels() > 2 || !range.contains_rate(SampleRate(SAMPLE_RATE)) {
+            if range.channels() > 2 || !range.contains_rate(SAMPLE_RATE) {
                 continue;
             }
-            let config = range.with_sample_rate(SampleRate(SAMPLE_RATE));
+            let config = range.with_sample_rate(SAMPLE_RATE);
             if config.channels() == 2
                 && matches!(
                     config.sample_format(),
