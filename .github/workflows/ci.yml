@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.98.1"
+          toolchain: "nightly-2026-11-27"
           components: rustfmt
       - run: cargo fmt --all -- --check
 
@@ -39,7 +39,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.98.1"
+          toolchain: "nightly-2026-11-27"
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
@@ -69,7 +69,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.98.1"
+          toolchain: "nightly-2026-11-27"
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
@@ -80,8 +80,6 @@ jobs:
         run: echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
       - name: Clippy
         run: cargo clippy -p rustycord --all-targets -- -D warnings
-      - name: Test
-        run: cargo test -p rustycord
       - name: Test
         run: cargo test -p rustycord
       - name: Build
@@ -99,7 +97,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.98.1"
+          toolchain: "nightly-2026-11-27"
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
