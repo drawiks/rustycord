@@ -9,7 +9,8 @@ use std::{
 };
 
 use cpal::{
-    SampleFormat, SampleRate, Stream, StreamConfig, SupportedStreamConfig,
+    SampleFormat, SampleRate, SupportedStreamConfig,
+    platform::{Device, Host, Stream},
     traits::{DeviceTrait, HostTrait, StreamTrait},
 };
 use tracing::{info, warn};
@@ -144,7 +145,7 @@ fn audio_thread(
 }
 
 fn build_input(
-    host: &cpal::Host,
+    host: &Host,
     name: Option<&str>,
     capture: &Arc<Mutex<VecDeque<f32>>>,
 ) -> Option<Stream> {
@@ -189,7 +190,7 @@ fn build_input(
 }
 
 fn build_output(
-    host: &cpal::Host,
+    host: &Host,
     name: Option<&str>,
     playback: &Arc<Mutex<VecDeque<f32>>>,
 ) -> Option<Stream> {
@@ -242,9 +243,9 @@ fn build_output(
     Some(stream)
 }
 
-fn pick_device(host: &cpal::Host, name: Option<&str>, input: bool) -> Option<cpal::Device> {
+fn pick_device(host: &Host, name: Option<&str>, input: bool) -> Option<Device> {
     if let Some(name) = name {
-        let devices: Box<dyn Iterator<Item = cpal::Device>> = if input {
+        let devices: Box<dyn Iterator<Item = Device>> = if input {
             Box::new(host.input_devices().ok()?)
         } else {
             Box::new(host.output_devices().ok()?)
@@ -263,7 +264,7 @@ fn pick_device(host: &cpal::Host, name: Option<&str>, input: bool) -> Option<cpa
     }
 }
 
-fn input_config(device: &cpal::Device) -> Option<SupportedStreamConfig> {
+fn input_config(device: &Device) -> Option<SupportedStreamConfig> {
     let mut fallback = None;
     if let Ok(ranges) = device.supported_input_configs() {
         for range in ranges {
@@ -285,7 +286,7 @@ fn input_config(device: &cpal::Device) -> Option<SupportedStreamConfig> {
     fallback.or_else(|| device.default_input_config().ok())
 }
 
-fn output_config(device: &cpal::Device) -> Option<SupportedStreamConfig> {
+fn output_config(device: &Device) -> Option<SupportedStreamConfig> {
     let mut fallback = None;
     if let Ok(ranges) = device.supported_output_configs() {
         for range in ranges {
@@ -368,8 +369,8 @@ fn write_samples(
     count: usize,
 ) {
     let size = sample_size(format);
+    bytes.fill(0);
     if size == 0 || channels == 0 {
-        bytes.fill(0);
         return;
     }
     for index in 0..count {
