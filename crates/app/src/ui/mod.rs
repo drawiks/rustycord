@@ -331,14 +331,13 @@ impl App {
                 if let Event::CallCreate(call) | Event::CallUpdate(call) = &event {
                     self.update_call(call);
                 }
-                if let Event::CallDelete { channel_id } = &event {
-                    if self
+                if let Event::CallDelete { channel_id } = &event
+                    && self
                         .incoming_call
                         .as_ref()
                         .is_some_and(|call| &call.channel_id == channel_id)
-                    {
-                        self.incoming_call = None;
-                    }
+                {
+                    self.incoming_call = None;
                 }
                 self.state.apply(&event);
                 if ready {
