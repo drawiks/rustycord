@@ -9,3 +9,8 @@ rustycord bundles the following assets and dependencies:
 - **Lucide** icons (via gpui-kit-assets) — ISC License, Copyright Lucide Icons and Contributors.
 - **GPUI**, **GPUI Kit**, **GPUI Base**, **GPUI Component** — Apache-2.0.
 - **BoringSSL** (via `btls`) — OpenSSL/SSLeay-style licenses.
+- **libopus** (via `opusic-c`) — BSD-3-Clause, Copyright Xiph.Org and contributors.
+  See `licenses/libopus-COPYING.txt`.
+- **cpal** — Apache-2.0.
+- **davey** and **openmls** — MIT.
+- **RustCrypto** crates (`aes-gcm`, `chacha20poly1305`) — Apache-2.0/MIT.

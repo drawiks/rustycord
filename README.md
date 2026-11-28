@@ -44,6 +44,14 @@ cargo build --release -p rustycord
 
 Vulkan 1.3 capable driver is required (llvmpipe works).
 
+## Voice
+
+- Join guild voice channels from the sidebar; join or start DM/group calls from the call button in the header.
+- Microphone uses voice activity detection (VAD). Mute and deafen from the user panel.
+- Input/output devices are selected in the settings dialog; the choice is stored in `audio.conf` next to the app config.
+- Media uses Opus over Discord's UDP transport with DAVE end-to-end encryption (MLS).
+- Not implemented: screen share/Go Live, push-to-talk, noise suppression, voice activity sensitivity.
+
 ## Usage
 
 Paste a Discord user token into the login screen (browser DevTools: `F12` -> Application -> Local Storage -> `token`).
@@ -52,3 +60,6 @@ Paste a Discord user token into the login screen (browser DevTools: `F12` -> App
 ## CI
 
 ![CI](https://github.com/drawiks/rustycord/actions/workflows/ci.yml/badge.svg)
+
+Voice handshake can be tested from the `Voice smoke` workflow: add a `DISCORD_TOKEN` repository secret and run it
+with a voice channel ID (and optional guild ID). The test joins the channel, waits for the DAVE MLS group, and leaves.
