@@ -362,6 +362,7 @@ fn read_samples(bytes: &[u8], format: SampleFormat, channels: usize) -> Vec<[f32
     output
 }
 
+#[allow(clippy::needless_range_loop)]
 fn write_samples(
     bytes: &mut [u8],
     format: SampleFormat,
