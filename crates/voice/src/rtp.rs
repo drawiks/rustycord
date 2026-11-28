@@ -110,6 +110,6 @@ mod tests {
         assert_eq!(offset, HEADER_LEN + 12);
         assert_eq!(&packet[offset..], &[9, 9]);
         let (_, _, crypto) = RtpHeader::parse_crypto(&packet).expect("header");
-        assert_eq!(crypto, HEADER_LEN + 4);
+        assert_eq!(crypto, HEADER_LEN + 8);
     }
 }
