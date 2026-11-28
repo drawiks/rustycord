@@ -483,10 +483,9 @@ async fn discover(udp: &UdpSocket, ssrc: u32) -> Result<discovery::DiscoveryResp
     for _ in 0..5 {
         udp.send(&request).await?;
         if let Ok(Ok(received)) = time::timeout(Duration::from_secs(2), udp.recv(&mut buffer)).await
+            && let Some(response) = parse_discovery(&buffer[..received])
         {
-            if let Some(response) = parse_discovery(&buffer[..received]) {
-                return Ok(response);
-            }
+            return Ok(response);
         }
     }
     Err(Error::Timeout)

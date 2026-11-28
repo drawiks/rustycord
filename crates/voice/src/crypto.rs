@@ -50,7 +50,6 @@ enum Cipher {
 
 pub struct TransportCrypto {
     cipher: Cipher,
-    mode: CryptoMode,
     counter: u32,
 }
 
@@ -67,7 +66,6 @@ impl TransportCrypto {
         };
         Ok(Self {
             cipher,
-            mode,
             counter: rand::random(),
         })
     }
