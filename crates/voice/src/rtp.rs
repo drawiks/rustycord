@@ -51,6 +51,7 @@ impl RtpHeader {
     }
 }
 
+#[allow(dead_code)] // used by the audio engine
 pub fn build(header: &RtpHeader, payload: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(HEADER_LEN + payload.len());
     header.write(&mut out);

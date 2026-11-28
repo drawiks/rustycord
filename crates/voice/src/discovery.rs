@@ -37,7 +37,8 @@ pub fn ping_request(sequence: u32) -> [u8; 8] {
 }
 
 pub fn parse_ping(data: &[u8]) -> Option<u32> {
-    if data.len() != 8 || u32::from_be_bytes([data[0], data[1], data[2], data[3]]) != PING_RESPONSE {
+    if data.len() != 8 || u32::from_be_bytes([data[0], data[1], data[2], data[3]]) != PING_RESPONSE
+    {
         return None;
     }
     Some(u32::from_be_bytes([data[4], data[5], data[6], data[7]]))

@@ -44,7 +44,7 @@ impl CryptoMode {
 }
 
 enum Cipher {
-    Aes(Aes256Gcm),
+    Aes(Box<Aes256Gcm>),
     XChaCha(XChaCha20Poly1305),
 }
 
@@ -58,6 +58,7 @@ impl TransportCrypto {
     pub fn new(mode: CryptoMode, key: &[u8]) -> Result<Self> {
         let cipher = match mode {
             CryptoMode::Aes256Gcm => Aes256Gcm::new_from_slice(key)
+                .map(Box::new)
                 .map(Cipher::Aes)
                 .map_err(|_| Error::Crypto("invalid aes key".to_string()))?,
             CryptoMode::XChaCha20Poly1305 => XChaCha20Poly1305::new_from_slice(key)
@@ -71,10 +72,7 @@ impl TransportCrypto {
         })
     }
 
-    pub fn mode(&self) -> CryptoMode {
-        self.mode
-    }
-
+    #[allow(dead_code)] // used by the audio engine
     pub fn encrypt(&mut self, header: &[u8], payload: &[u8]) -> Result<Vec<u8>> {
         let nonce_value = self.counter;
         self.counter = self.counter.wrapping_add(1);
@@ -157,7 +155,10 @@ mod tests {
         let mut sender = TransportCrypto::new(mode, &key).expect("cipher");
         let encrypted = sender.encrypt(&header, payload).expect("encrypt");
         assert_eq!(encrypted.len(), header.len() + payload.len() + 20);
-        assert_ne!(&encrypted[header.len()..header.len() + payload.len()], payload);
+        assert_ne!(
+            &encrypted[header.len()..header.len() + payload.len()],
+            payload
+        );
         let receiver = TransportCrypto::new(mode, &key).expect("cipher");
         let decrypted = receiver.decrypt(&encrypted, header.len()).expect("decrypt");
         assert_eq!(&decrypted[..header.len()], &header);
