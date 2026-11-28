@@ -1,0 +1,26 @@
+[package]
+name = "rustycord-voice"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Discord voice protocol and audio engine"
+
+[dependencies]
+aead = "0.5"
+aes-gcm = "0.10.3"
+chacha20poly1305 = "0.10.1"
+crypto-common = { version = "0.1", features = ["std"] }
+davey = "0.2.0"
+futures-util = "0.3"
+rand = "0.9"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "rt", "sync", "time"] }
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
