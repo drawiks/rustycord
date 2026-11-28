@@ -488,10 +488,12 @@ async fn connect_once(
                         .unwrap_or_else(|| payload.to_vec()),
                     None => payload.to_vec(),
                 };
-                if !decoders.contains_key(&user_id) {
+                if let std::collections::hash_map::Entry::Vacant(entry) =
+                    decoders.entry(user_id)
+                {
                     match Decoder::new(Channels::Stereo, SampleRate::Hz48000) {
                         Ok(decoder) => {
-                            decoders.insert(user_id, decoder);
+                            entry.insert(decoder);
                         }
                         Err(error) => {
                             debug!("voice decoder failed: {error:?}");
@@ -530,7 +532,7 @@ async fn connect_once(
                 if muted || deafened {
                     let _ = audio.take_frame();
                     if speaking_flag {
-                        let _ = send_speaking(&mut write, ssrc, false).await?;
+                        send_speaking(&mut write, ssrc, false).await?;
                         speaking_flag = false;
                     }
                 } else if let Some(frame) = audio.take_frame() {
@@ -609,13 +611,13 @@ async fn connect_once(
             command = commands.recv() => {
                 match command {
                     Some(VoiceCommand::Leave) | None => {
-                        let _ = send_speaking(&mut write, ssrc, false).await;
+                        send_speaking(&mut write, ssrc, false).await?;
                         return Ok(Outcome::Left);
                     }
                     Some(VoiceCommand::SetMute(value)) => {
                         muted = value;
                         if muted && speaking_flag {
-                            let _ = send_speaking(&mut write, ssrc, false).await;
+                            send_speaking(&mut write, ssrc, false).await?;
                             speaking_flag = false;
                         }
                     }
@@ -624,7 +626,7 @@ async fn connect_once(
                         if deafened {
                             jitter.clear();
                             if speaking_flag {
-                                let _ = send_speaking(&mut write, ssrc, false).await;
+                                send_speaking(&mut write, ssrc, false).await?;
                                 speaking_flag = false;
                             }
                         }
