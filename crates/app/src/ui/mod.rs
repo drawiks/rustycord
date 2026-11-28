@@ -298,6 +298,9 @@ impl App {
                         self.voice_latency = None;
                         self.speaking.clear();
                     } else {
+                        if let Some(net) = &self.net {
+                            net.send(Command::VoiceLeave);
+                        }
                         self.voice = None;
                         self.voice_status.clear();
                         self.voice_mode = None;

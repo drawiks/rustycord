@@ -20,6 +20,7 @@ pub enum DaveAction {
 pub struct Dave {
     session: Option<DaveSession>,
     version: u16,
+    active_version: u16,
     pending: HashMap<u16, u16>,
     recognized: HashSet<u64>,
     external_sender: Option<Vec<u8>>,
@@ -34,6 +35,7 @@ impl Dave {
         Self {
             session: None,
             version: 0,
+            active_version: 0,
             pending: HashMap::new(),
             recognized,
             external_sender: None,
@@ -79,8 +81,9 @@ impl Dave {
             warn!("dave execute for unknown transition {transition_id}");
             return;
         };
-        let old_version = self.version;
+        let old_version = self.active_version;
         self.version = new_version;
+        self.active_version = new_version;
         if transition_id > 0
             && old_version == 0
             && new_version != 0
@@ -227,7 +230,7 @@ impl Dave {
 
     #[allow(dead_code)] // used by the audio engine
     pub fn encrypt_opus(&mut self, packet: &[u8]) -> Option<Vec<u8>> {
-        if self.version == 0 {
+        if self.active_version == 0 {
             return None;
         }
         let session = self.session.as_mut()?;
@@ -244,9 +247,6 @@ impl Dave {
     }
 
     pub fn decrypt_opus(&mut self, user_id: u64, packet: &[u8]) -> Option<Vec<u8>> {
-        if self.version == 0 {
-            return None;
-        }
         let session = self.session.as_mut()?;
         if session.can_passthrough(user_id) {
             return None;
