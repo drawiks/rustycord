@@ -1,0 +1,39 @@
+name: Voice smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      guild_id:
+        description: Guild ID (leave empty for a DM call)
+        required: false
+      channel_id:
+        description: Voice channel ID
+        required: true
+
+concurrency:
+  group: voice-smoke
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Voice handshake
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "nightly-2026-11-26"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: voice-smoke
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build nasm libasound2-dev libclang-dev pkg-config
+      - name: Smoke
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+          VOICE_GUILD_ID: ${{ inputs.guild_id }}
+          VOICE_CHANNEL_ID: ${{ inputs.channel_id }}
+          VOICE_REQUIRE_DAVE: "1"
+        run: cargo test -p rustycord-voice --test voice_smoke -- --ignored --nocapture

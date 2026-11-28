@@ -63,6 +63,8 @@ pub enum Command {
         guild_id: Option<String>,
         channel_id: String,
         ring: bool,
+        self_mute: bool,
+        self_deaf: bool,
         input_device: Option<String>,
         output_device: Option<String>,
     },
@@ -231,7 +233,7 @@ async fn run(
                         gateway.subscribe_members(&guild_id, &channel_id);
                     }
                     Command::SetStatus { status } => gateway.set_status(&status),
-                    Command::VoiceJoin { guild_id, channel_id, ring, input_device, output_device } => {
+                    Command::VoiceJoin { guild_id, channel_id, ring, self_mute, self_deaf, input_device, output_device } => {
                         if let Some(handle) = voice.take() {
                             handle.leave();
                         }
@@ -241,13 +243,18 @@ async fn run(
                             session_id: None,
                             server: None,
                             ring,
-                            self_mute: false,
-                            self_deaf: false,
+                            self_mute,
+                            self_deaf,
                             input_device,
                             output_device,
                         });
                         active = None;
-                        gateway.voice_state(pending.as_ref().and_then(|p| p.guild_id.as_deref()), Some(&channel_id), false, false);
+                        gateway.voice_state(
+                            pending.as_ref().and_then(|p| p.guild_id.as_deref()),
+                            Some(&channel_id),
+                            self_mute,
+                            self_deaf,
+                        );
                     }
                     Command::VoiceLeave => {
                         if let Some(handle) = voice.take() {
@@ -262,6 +269,10 @@ async fn run(
                     }
                     Command::SetMute { mute, deafen } => {
                         if let Some(current) = active.as_mut() {
+                            current.self_mute = mute;
+                            current.self_deaf = deafen;
+                            gateway.voice_state(current.guild_id.as_deref(), Some(&current.channel_id), mute, deafen);
+                        } else if let Some(current) = pending.as_mut() {
                             current.self_mute = mute;
                             current.self_deaf = deafen;
                             gateway.voice_state(current.guild_id.as_deref(), Some(&current.channel_id), mute, deafen);

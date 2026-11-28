@@ -13,6 +13,10 @@ pub struct RtpHeader {
 
 impl RtpHeader {
     pub fn parse(data: &[u8]) -> Option<(Self, usize)> {
+        Self::parse_crypto(data).map(|(header, payload_offset, _)| (header, payload_offset))
+    }
+
+    pub fn parse_crypto(data: &[u8]) -> Option<(Self, usize, usize)> {
         if data.len() < HEADER_LEN || data[0] >> 6 != RTP_VERSION {
             return None;
         }
@@ -21,16 +25,20 @@ impl RtpHeader {
         if data.len() < offset {
             return None;
         }
-        if data[0] & 0x10 != 0 {
+        let crypto = if data[0] & 0x10 != 0 {
             if data.len() < offset + 4 {
                 return None;
             }
+            let crypto = offset + 4;
             let words = u16::from_be_bytes([data[offset + 2], data[offset + 3]]) as usize;
-            offset += 4 + words * 4;
+            offset = crypto + words * 4;
             if data.len() < offset {
                 return None;
             }
-        }
+            crypto
+        } else {
+            offset
+        };
         Some((
             Self {
                 payload_type: data[1] & 0x7f,
@@ -39,6 +47,7 @@ impl RtpHeader {
                 ssrc: u32::from_be_bytes([data[8], data[9], data[10], data[11]]),
             },
             offset,
+            crypto,
         ))
     }
 
@@ -100,5 +109,7 @@ mod tests {
         assert_eq!(header.sequence, 7);
         assert_eq!(offset, HEADER_LEN + 12);
         assert_eq!(&packet[offset..], &[9, 9]);
+        let (_, _, crypto) = RtpHeader::parse_crypto(&packet).expect("header");
+        assert_eq!(crypto, HEADER_LEN + 4);
     }
 }

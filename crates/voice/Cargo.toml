@@ -25,4 +25,5 @@ tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
 tracing = "0.1"
 
 [dev-dependencies]
+rustycord-discord = { path = "../discord" }
 tokio = { version = "1", features = ["full"] }

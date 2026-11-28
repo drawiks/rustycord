@@ -219,6 +219,12 @@ impl Dave {
         }
     }
 
+    pub fn is_ready(&self) -> bool {
+        self.session
+            .as_ref()
+            .is_some_and(|session| session.is_ready())
+    }
+
     #[allow(dead_code)] // used by the audio engine
     pub fn encrypt_opus(&mut self, packet: &[u8]) -> Option<Vec<u8>> {
         if self.version == 0 {

@@ -291,13 +291,20 @@ impl App {
                     }
                 }
                 VoiceEvent::Ping(latency) => self.voice_latency = Some(latency),
-                VoiceEvent::Disconnected { reason, .. } => {
-                    self.voice = None;
-                    self.voice_status.clear();
-                    self.voice_mode = None;
-                    self.voice_latency = None;
-                    self.speaking.clear();
-                    self.notice = Some(reason);
+                VoiceEvent::DaveReady => self.voice_dave = true,
+                VoiceEvent::Disconnected { reason, reconnect } => {
+                    if reconnect {
+                        self.voice_status = "переподключение…".to_string();
+                        self.voice_latency = None;
+                        self.speaking.clear();
+                    } else {
+                        self.voice = None;
+                        self.voice_status.clear();
+                        self.voice_mode = None;
+                        self.voice_latency = None;
+                        self.speaking.clear();
+                        self.notice = Some(reason);
+                    }
                 }
                 VoiceEvent::Error(error) => self.error = Some(error),
                 VoiceEvent::ClientConnect { .. } | VoiceEvent::ClientDisconnect { .. } => {}
@@ -447,6 +454,8 @@ impl App {
                 guild_id: guild_id.clone(),
                 channel_id: channel_id.clone(),
                 ring,
+                self_mute: self.muted,
+                self_deaf: self.deafened,
                 input_device: self.input_device.clone(),
                 output_device: self.output_device.clone(),
             });

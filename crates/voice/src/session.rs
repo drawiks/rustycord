@@ -77,6 +77,7 @@ pub enum VoiceEvent {
         user_id: String,
     },
     Ping(u32),
+    DaveReady,
     Disconnected {
         reason: String,
         reconnect: bool,
@@ -150,6 +151,10 @@ async fn run(
         }
         attempt += 1;
         if attempt > 4 {
+            let _ = events.send(VoiceEvent::Disconnected {
+                reason: "не удалось подключиться к голосу".to_string(),
+                reconnect: false,
+            });
             break;
         }
         let delay = Duration::from_secs(1 << attempt.min(4));
@@ -188,7 +193,8 @@ async fn connect_once(
     )
     .await?;
 
-    let hello = wait_for(&mut read, HANDSHAKE_TIMEOUT, 8, &mut None).await?;
+    let mut early = Early::default();
+    let hello = wait_for(&mut read, HANDSHAKE_TIMEOUT, 8, &mut early).await?;
     let heartbeat_ms = hello["d"]["heartbeat_interval"]
         .as_f64()
         .unwrap_or(41_250.0)
@@ -198,7 +204,7 @@ async fn connect_once(
         hello["d"]["v"].as_u64().unwrap_or_default()
     );
 
-    let ready = wait_for(&mut read, HANDSHAKE_TIMEOUT, 2, &mut None).await?;
+    let ready = wait_for(&mut read, HANDSHAKE_TIMEOUT, 2, &mut early).await?;
     let ssrc = ready["d"]["ssrc"]
         .as_u64()
         .ok_or_else(|| Error::Protocol("voice ready missing ssrc".to_string()))?
@@ -237,28 +243,47 @@ async fn connect_once(
     )
     .await?;
 
-    let mut external_sender = None;
-    let description = wait_for(&mut read, HANDSHAKE_TIMEOUT, 4, &mut external_sender).await?;
+    let description = wait_for(&mut read, HANDSHAKE_TIMEOUT, 4, &mut early).await?;
     let description = &description["d"];
     let secret: Vec<u8> = serde_json::from_value(description["secret_key"].clone())
         .map_err(|_| Error::Protocol("voice session missing secret key".to_string()))?;
     let mut crypto = TransportCrypto::new(mode, &secret)?;
     let dave_version = description["dave_protocol_version"].as_u64().unwrap_or(0) as u16;
-    let mut dave = if dave_version > 0 {
-        let channel_id = session
-            .channel_id
-            .parse::<u64>()
-            .map_err(|_| Error::Protocol("invalid channel id".to_string()))?;
-        let user_id = session
-            .user_id
-            .parse::<u64>()
-            .map_err(|_| Error::Protocol("invalid user id".to_string()))?;
-        Some(Dave::new(user_id, channel_id))
-    } else {
-        None
-    };
-    if let (Some(dave), Some(external)) = (&mut dave, &external_sender) {
-        dave.set_external_sender(external);
+    let channel_id = session
+        .channel_id
+        .parse::<u64>()
+        .map_err(|_| Error::Protocol("invalid channel id".to_string()))?;
+    let user_id = session
+        .user_id
+        .parse::<u64>()
+        .map_err(|_| Error::Protocol("invalid user id".to_string()))?;
+    let mut dave = Some(Dave::new(user_id, channel_id));
+    if let Some(dave) = &mut dave {
+        if let Some(external) = &early.external_sender {
+            dave.set_external_sender(external);
+        }
+        for user_id in &early.user_ids {
+            dave.client_connect(*user_id);
+        }
+        for value in &early.dave {
+            let op = value["op"].as_u64().unwrap_or(u64::MAX);
+            let data = &value["d"];
+            match op {
+                21 => {
+                    let transition_id = data["transition_id"].as_u64().unwrap_or_default() as u16;
+                    let version = data["protocol_version"].as_u64().unwrap_or_default() as u16;
+                    let actions = dave.prepare_transition(transition_id, version);
+                    send_actions(&mut write, actions).await?;
+                }
+                24 => {
+                    let epoch = data["epoch"].as_u64().unwrap_or_default() as u32;
+                    let version = data["protocol_version"].as_u64().unwrap_or_default() as u16;
+                    let actions = dave.prepare_epoch(epoch, version);
+                    send_actions(&mut write, actions).await?;
+                }
+                _ => {}
+            }
+        }
     }
     let audio = AudioEngine::start(session.input_device.clone(), session.output_device.clone());
     let mut encoder = Encoder::new(Channels::Stereo, SampleRate::Hz48000, Application::Voip).ok();
@@ -273,6 +298,7 @@ async fn connect_once(
     let mut silence_frames = 0u8;
     let mut sequence = rand::random::<u16>();
     let mut timestamp = rand::random::<u32>();
+    let mut dave_ready = false;
     let mut decoders: HashMap<u64, Decoder> = HashMap::new();
     let mut jitter: HashMap<u64, VecDeque<Vec<f32>>> = HashMap::new();
     let mut audio_timer = time::interval(Duration::from_millis(20));
@@ -328,6 +354,13 @@ async fn connect_once(
                                 let speaking = data["speaking"].as_u64().unwrap_or(0) != 0;
                                 let _ = events.send(VoiceEvent::Speaking { user_id, ssrc, speaking });
                             }
+                            3 => {
+                                send_json(&mut write, json!({
+                                    "op": 3,
+                                    "d": { "t": unix_ms(), "seq_ack": last_seq }
+                                })).await?;
+                                awaiting_ack = true;
+                            }
                             6 => awaiting_ack = false,
                             8 => {
                                 if let Some(interval) = data["heartbeat_interval"].as_f64() {
@@ -369,6 +402,10 @@ async fn connect_once(
                                 let transition_id = data["transition_id"].as_u64().unwrap_or_default() as u16;
                                 if let Some(dave) = &mut dave {
                                     dave.execute_transition(transition_id);
+                                    if !dave_ready && dave.is_ready() {
+                                        dave_ready = true;
+                                        let _ = events.send(VoiceEvent::DaveReady);
+                                    }
                                 }
                             }
                             24 => {
@@ -459,13 +496,13 @@ async fn connect_once(
                     }
                     continue;
                 }
-                let Some((header, offset)) = RtpHeader::parse(packet) else {
+                let Some((header, _, crypto_offset)) = RtpHeader::parse_crypto(packet) else {
                     continue;
                 };
                 if header.payload_type != OPUS_PAYLOAD_TYPE {
                     continue;
                 }
-                let decrypted = match crypto.decrypt(packet, offset) {
+                let decrypted = match crypto.decrypt(packet, crypto_offset) {
                     Ok(decrypted) => decrypted,
                     Err(error) => {
                         debug!("voice transport decrypt failed: {error}");
@@ -786,6 +823,13 @@ fn close_outcome(code: Option<u16>) -> (String, bool) {
     }
 }
 
+#[derive(Default)]
+struct Early {
+    external_sender: Option<Vec<u8>>,
+    user_ids: Vec<u64>,
+    dave: Vec<Value>,
+}
+
 enum Incoming {
     Json(Value),
     Binary(Vec<u8>),
@@ -818,7 +862,7 @@ async fn wait_for(
     read: &mut Read,
     timeout: Duration,
     want_op: u64,
-    external_sender: &mut Option<Vec<u8>>,
+    early: &mut Early,
 ) -> Result<Value> {
     let deadline = Instant::now() + timeout;
     loop {
@@ -827,11 +871,29 @@ async fn wait_for(
             return Err(Error::Timeout);
         }
         match next_incoming(read, remaining).await? {
-            Incoming::Json(value) if value["op"].as_u64() == Some(want_op) => return Ok(value),
-            Incoming::Json(_) | Incoming::Ignored => {}
+            Incoming::Json(value) => {
+                let op = value["op"].as_u64().unwrap_or(u64::MAX);
+                if op == want_op {
+                    return Ok(value);
+                }
+                match op {
+                    11 => {
+                        for user_id in value["d"]["user_ids"].as_array().into_iter().flatten() {
+                            if let Some(user_id) =
+                                user_id.as_str().and_then(|id| id.parse::<u64>().ok())
+                            {
+                                early.user_ids.push(user_id);
+                            }
+                        }
+                    }
+                    21 | 24 => early.dave.push(value),
+                    _ => {}
+                }
+            }
+            Incoming::Ignored => {}
             Incoming::Binary(bytes) => {
                 if bytes.len() >= 3 && bytes[2] == 25 {
-                    *external_sender = Some(bytes[3..].to_vec());
+                    early.external_sender = Some(bytes[3..].to_vec());
                 }
             }
             Incoming::Closed(code) => {

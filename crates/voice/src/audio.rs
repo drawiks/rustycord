@@ -448,3 +448,41 @@ fn f32_to_sample(value: f32, format: SampleFormat, output: &mut [u8]) {
         _ => output.fill(0),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resamples_lengths_and_values() {
+        let frames = vec![[0.0, 1.0], [1.0, 0.0]];
+        let down = resample(&frames, 48_000, 24_000, 0);
+        assert_eq!(down.len(), 1);
+        assert_eq!(down[0], [0.0, 1.0]);
+
+        let up = resample(&frames, 24_000, 48_000, 4);
+        assert_eq!(up.len(), 4);
+        assert_eq!(up[0], [0.0, 1.0]);
+        assert_eq!(up[1], [0.5, 0.5]);
+    }
+
+    #[test]
+    fn converts_f32_and_i16_samples() {
+        let mut bytes = [0u8; 4];
+        f32_to_sample(0.5, SampleFormat::F32, &mut bytes);
+        assert_eq!(sample_to_f32(&bytes, SampleFormat::F32), 0.5);
+
+        let mut bytes = [0u8; 2];
+        f32_to_sample(0.5, SampleFormat::I16, &mut bytes);
+        assert!((sample_to_f32(&bytes, SampleFormat::I16) - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn writes_and_reads_stereo_frames() {
+        let frames = vec![[0.25, -0.25], [0.5, -0.5]];
+        let mut bytes = vec![0u8; 2 * 2 * 4];
+        write_samples(&mut bytes, SampleFormat::F32, 2, &frames, 2);
+        let parsed = read_samples(&bytes, SampleFormat::F32, 2);
+        assert_eq!(parsed, frames);
+    }
+}
