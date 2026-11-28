@@ -339,6 +339,7 @@ fn resample(input: &[[f32; 2]], from: u32, to: u32, out_frames: usize) -> Vec<[f
     output
 }
 
+#[allow(clippy::needless_range_loop)]
 fn read_samples(bytes: &[u8], format: SampleFormat, channels: usize) -> Vec<[f32; 2]> {
     let size = sample_size(format);
     if size == 0 || channels == 0 {
