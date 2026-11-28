@@ -114,7 +114,85 @@ impl App {
                     })
             })
             .child(list)
+            .child(self.render_voice_panel(cx))
             .child(self.render_user_panel(cx))
+    }
+
+    fn render_voice_panel(&self, cx: &mut Context<Self>) -> AnyElement {
+        let Some(voice) = &self.voice else {
+            return div().into_any_element();
+        };
+        let name = self
+            .state
+            .channel(&voice.channel_id)
+            .map(|channel| self.state.channel_display_name(channel))
+            .unwrap_or_else(|| voice.channel_id.clone());
+        let status = if self.voice_status.is_empty() {
+            "подключение…".to_string()
+        } else {
+            self.voice_status.clone()
+        };
+        let mut detail = status;
+        if let Some(mode) = &self.voice_mode {
+            detail.push_str(" · ");
+            detail.push_str(mode);
+        }
+        if self.voice_dave {
+            detail.push_str(" · E2EE");
+        }
+        if let Some(latency) = self.voice_latency {
+            detail.push_str(&format!(" · {latency} мс"));
+        }
+
+        div()
+            .h(px(56.))
+            .flex_none()
+            .bg(rgb(PANEL))
+            .px(px(10.))
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .child(
+                gpui_kit::component::Icon::new(IconName::Volume2)
+                    .size(px(18.))
+                    .text_color(rgb(0x23a55a)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(rgb(0x23a55a))
+                            .truncate()
+                            .child(name),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(rgb(MUTED))
+                            .child(detail),
+                    ),
+            )
+            .child(
+                div()
+                    .id("voice-disconnect")
+                    .size(px(28.))
+                    .rounded(px(4.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_color(rgb(MUTED))
+                    .cursor_pointer()
+                    .hover(|style| style.bg(rgb(RAIL_HOVER)).text_color(rgb(DANGER)))
+                    .child(gpui_kit::component::Icon::new(IconName::PhoneOff).size(px(16.)))
+                    .on_click(cx.listener(|this, _, _, cx| this.leave_voice(cx))),
+            )
+            .into_any_element()
     }
 
     fn guild_channel_list(
@@ -207,6 +285,10 @@ impl App {
         };
         let name = channel.display_name();
         let members = self.state.voice_members(&guild_id, &channel.id);
+        let connected = self
+            .voice
+            .as_ref()
+            .is_some_and(|voice| voice.channel_id == channel.id);
         let count = members.len();
         let count_label = if count == 0 {
             String::new()
@@ -215,7 +297,8 @@ impl App {
         } else {
             count.to_string()
         };
-        let notice = "Голосовые каналы пока не поддерживаются".to_string();
+        let click_guild = guild_id.clone();
+        let click_channel = channel.id.clone();
 
         let mut column = div().flex().flex_col().child(
             div()
@@ -231,15 +314,21 @@ impl App {
                 .pr(px(8.))
                 .rounded(px(4.))
                 .text_size(px(15.))
-                .text_color(rgb(MUTED))
+                .text_color(rgb(if connected { 0x23a55a } else { MUTED }))
                 .cursor_pointer()
                 .hover(|style| style.bg(rgb(RAIL_HOVER)))
                 .child(
                     gpui_kit::component::Icon::new(IconName::Volume2)
                         .size(px(18.))
-                        .text_color(rgb(ICON)),
+                        .text_color(rgb(if connected { 0x23a55a } else { ICON })),
                 )
-                .child(div().flex_1().truncate().child(name))
+                .child(
+                    div()
+                        .flex_1()
+                        .truncate()
+                        .text_color(rgb(if connected { 0x23a55a } else { MUTED }))
+                        .child(name),
+                )
                 .child(
                     div()
                         .text_size(px(11.))
@@ -247,8 +336,7 @@ impl App {
                         .child(count_label),
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    this.notice = Some(notice.clone());
-                    cx.notify();
+                    this.toggle_voice(Some(click_guild.clone()), click_channel.clone(), cx);
                 })),
         );
 
@@ -260,6 +348,7 @@ impl App {
                 .unwrap_or_else(|| user.display_name().to_string());
             let presence = self.state.presence(&user.id).to_string();
             let streaming = state.self_stream;
+            let speaking = self.speaking.contains(&user.id);
             let mut entry = div()
                 .flex()
                 .items_center()
@@ -273,9 +362,12 @@ impl App {
                         .flex_1()
                         .truncate()
                         .text_size(px(13.))
-                        .text_color(rgb(TEXT))
+                        .text_color(rgb(if speaking { 0x23a55a } else { TEXT }))
                         .child(user_name),
                 );
+            if speaking {
+                entry = entry.child(div().size(px(6.)).rounded(px(3.)).bg(rgb(0x23a55a)));
+            }
             if streaming {
                 entry = entry.child(
                     div()
@@ -560,18 +652,48 @@ impl App {
                     .flex()
                     .items_center()
                     .gap(px(2.))
-                    .child(panel_button(
-                        "panel-mic",
-                        IconName::Mic,
-                        "Голосовые каналы пока не поддерживаются",
-                        cx,
-                    ))
-                    .child(panel_button(
-                        "panel-headphones",
-                        IconName::Headphones,
-                        "Голосовые каналы пока не поддерживаются",
-                        cx,
-                    ))
+                    .child(
+                        div()
+                            .id("panel-mic")
+                            .size(px(28.))
+                            .rounded(px(4.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_color(rgb(if self.muted { DANGER } else { MUTED }))
+                            .cursor_pointer()
+                            .hover(|style| style.bg(rgb(RAIL_HOVER)).text_color(rgb(TEXT_BRIGHT)))
+                            .child(
+                                gpui_kit::component::Icon::new(if self.muted {
+                                    IconName::MicOff
+                                } else {
+                                    IconName::Mic
+                                })
+                                .size(px(16.)),
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_mute(cx))),
+                    )
+                    .child(
+                        div()
+                            .id("panel-headphones")
+                            .size(px(28.))
+                            .rounded(px(4.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_color(rgb(if self.deafened { DANGER } else { MUTED }))
+                            .cursor_pointer()
+                            .hover(|style| style.bg(rgb(RAIL_HOVER)).text_color(rgb(TEXT_BRIGHT)))
+                            .child(
+                                gpui_kit::component::Icon::new(if self.deafened {
+                                    IconName::HeadphoneOff
+                                } else {
+                                    IconName::Headphones
+                                })
+                                .size(px(16.)),
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_deafen(cx))),
+                    )
                     .child(panel_button(
                         "panel-settings",
                         IconName::Settings,

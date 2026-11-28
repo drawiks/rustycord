@@ -118,6 +118,20 @@ pub struct PermissionOverwrite {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
+pub struct Call {
+    #[serde(default)]
+    pub channel_id: Id,
+    #[serde(default)]
+    pub message_id: Option<Id>,
+    #[serde(default)]
+    pub region: Option<String>,
+    #[serde(default, deserialize_with = "null_default")]
+    pub ringing: Vec<Id>,
+    #[serde(default)]
+    pub ended_timestamp: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct VoiceState {
     #[serde(default)]
     pub user_id: Id,

@@ -12,7 +12,7 @@ use wreq_util::Emulation;
 use crate::{
     error::{Error, Result},
     fingerprint::Fingerprint,
-    models::{Channel, Message, Relationship, User},
+    models::{Call, Channel, Message, Relationship, User},
 };
 
 const BASE: &str = "https://discord.com/api/v9";
@@ -376,6 +376,58 @@ impl Http {
             });
         }
         Ok(bytes.to_vec())
+    }
+
+    pub async fn channel_call(&self, channel_id: &str) -> Result<Call> {
+        let value = self
+            .send(
+                Method::GET,
+                &format!("/channels/{channel_id}/call"),
+                "channel_call",
+                channel_id,
+                &[],
+                None,
+            )
+            .await?;
+        Ok(serde_json::from_value(value)?)
+    }
+
+    pub async fn ring_call(&self, channel_id: &str, recipients: Option<&[String]>) -> Result<()> {
+        let body = match recipients {
+            Some(recipients) => json!({ "recipients": recipients }),
+            None => json!({}),
+        };
+        self.send(
+            Method::POST,
+            &format!("/channels/{channel_id}/call/ring"),
+            "channel_call_ring",
+            channel_id,
+            &[],
+            Some(body),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn stop_ringing(
+        &self,
+        channel_id: &str,
+        recipients: Option<&[String]>,
+    ) -> Result<()> {
+        let body = match recipients {
+            Some(recipients) => json!({ "recipients": recipients }),
+            None => json!({}),
+        };
+        self.send(
+            Method::POST,
+            &format!("/channels/{channel_id}/call/stop-ringing"),
+            "channel_call_stop_ringing",
+            channel_id,
+            &[],
+            Some(body),
+        )
+        .await?;
+        Ok(())
     }
 
     pub async fn typing(&self, channel_id: &str) -> Result<()> {

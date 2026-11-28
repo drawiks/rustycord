@@ -89,7 +89,7 @@ mod tests {
     #[test]
     fn skips_csrc_and_extension() {
         let mut packet = vec![0u8; HEADER_LEN];
-        packet[0] = 0x90;
+        packet[0] = 0x91;
         packet[2] = 0;
         packet[3] = 7;
         packet.extend_from_slice(&[0; 4]);

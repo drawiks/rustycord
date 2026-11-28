@@ -51,6 +51,26 @@ impl GatewayHandle {
         let _ = self.commands.send(payload);
     }
 
+    pub fn voice_state(
+        &self,
+        guild_id: Option<&str>,
+        channel_id: Option<&str>,
+        self_mute: bool,
+        self_deaf: bool,
+    ) {
+        let payload = json!({
+            "op": 4,
+            "d": {
+                "guild_id": guild_id,
+                "channel_id": channel_id,
+                "self_mute": self_mute,
+                "self_deaf": self_deaf,
+                "self_video": false
+            }
+        });
+        let _ = self.commands.send(payload);
+    }
+
     pub fn subscribe_members(&self, guild_id: &str, channel_id: &str) {
         let mut channels = serde_json::Map::new();
         channels.insert(channel_id.to_string(), json!([[0, 99]]));
@@ -480,17 +500,33 @@ async fn dispatch(name: &str, data: &Value, tx: &mpsc::Sender<Event>) {
             parse::<Presence>(name, data).map(|p| Event::PresenceUpdate(Box::new(p)))
         }
         "GUILD_MEMBER_ADD" | "GUILD_MEMBER_UPDATE" => member_event(data),
-        "VOICE_STATE_UPDATE" => match data["guild_id"].as_str() {
-            Some(guild_id) => {
-                serde_json::from_value::<VoiceState>(data.clone())
-                    .ok()
-                    .map(|state| Event::VoiceStateUpdate {
-                        guild_id: guild_id.to_string(),
-                        state: Box::new(state),
-                    })
-            }
-            None => None,
+        "VOICE_STATE_UPDATE" => {
+            serde_json::from_value::<VoiceState>(data.clone())
+                .ok()
+                .map(|state| Event::VoiceStateUpdate {
+                    guild_id: data["guild_id"].as_str().map(str::to_string),
+                    state: Box::new(state),
+                })
+        }
+        "VOICE_SERVER_UPDATE" => match (data["token"].as_str(), data["endpoint"].as_str()) {
+            (Some(token), Some(endpoint)) => Some(Event::VoiceServerUpdate {
+                guild_id: data["guild_id"].as_str().map(str::to_string),
+                token: token.to_string(),
+                endpoint: endpoint.to_string(),
+            }),
+            _ => None,
         },
+        "CALL_CREATE" => serde_json::from_value::<crate::models::Call>(data.clone())
+            .ok()
+            .map(|call| Event::CallCreate(Box::new(call))),
+        "CALL_UPDATE" => serde_json::from_value::<crate::models::Call>(data.clone())
+            .ok()
+            .map(|call| Event::CallUpdate(Box::new(call))),
+        "CALL_DELETE" => data["channel_id"]
+            .as_str()
+            .map(|channel_id| Event::CallDelete {
+                channel_id: channel_id.to_string(),
+            }),
         "GUILD_MEMBER_LIST_UPDATE" => member_list_event(data),
         "GUILD_MEMBERS_CHUNK" => match data["guild_id"].as_str() {
             Some(guild_id) => serde_json::from_value::<Vec<Member>>(data["members"].clone())

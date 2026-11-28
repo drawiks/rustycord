@@ -1,5 +1,6 @@
 use crate::models::{
-    Channel, Emoji, Guild, Id, Member, Message, Presence, Ready, Relationship, User, VoiceState,
+    Call, Channel, Emoji, Guild, Id, Member, Message, Presence, Ready, Relationship, User,
+    VoiceState,
 };
 
 #[derive(Debug, Clone)]
@@ -67,8 +68,18 @@ pub enum Event {
         members: Vec<Member>,
     },
     VoiceStateUpdate {
-        guild_id: Id,
+        guild_id: Option<Id>,
         state: Box<VoiceState>,
+    },
+    VoiceServerUpdate {
+        guild_id: Option<Id>,
+        token: String,
+        endpoint: String,
+    },
+    CallCreate(Box<Call>),
+    CallUpdate(Box<Call>),
+    CallDelete {
+        channel_id: Id,
     },
     UserUpdate(Box<User>),
     Connection(ConnectionState),

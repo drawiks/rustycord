@@ -114,6 +114,22 @@ impl Discord {
             .await
     }
 
+    pub async fn channel_call(&self, channel_id: &str) -> Result<Call> {
+        self.http.channel_call(channel_id).await
+    }
+
+    pub async fn ring_call(&self, channel_id: &str, recipients: Option<&[String]>) -> Result<()> {
+        self.http.ring_call(channel_id, recipients).await
+    }
+
+    pub async fn stop_ringing(
+        &self,
+        channel_id: &str,
+        recipients: Option<&[String]>,
+    ) -> Result<()> {
+        self.http.stop_ringing(channel_id, recipients).await
+    }
+
     pub async fn channel(&self, channel_id: &str) -> Result<Channel> {
         self.http.channel(channel_id).await
     }

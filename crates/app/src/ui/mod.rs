@@ -20,8 +20,9 @@ use gpui_kit::{
     ClipboardItem, Focusable, FontWeight, Subscription, Window, div, prelude::*, px, rgb,
 };
 use rustycord_discord::{
-    Channel, ConnectionState, Event, Id, Member, Message, Role, State, User, snowflake,
+    Call, Channel, ConnectionState, Event, Id, Member, Message, Role, State, User, snowflake,
 };
+use rustycord_voice::VoiceEvent;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 
 use self::widgets::{day_label, parse_timestamp};
@@ -74,7 +75,21 @@ pub struct App {
     pending_token: Option<String>,
     ack_tokens: HashMap<Id, String>,
     last_ack: Option<Instant>,
+    voice: Option<VoiceUi>,
+    voice_status: String,
+    voice_mode: Option<String>,
+    voice_dave: bool,
+    voice_latency: Option<u32>,
+    speaking: HashSet<Id>,
+    muted: bool,
+    deafened: bool,
+    incoming_call: Option<Call>,
     subscriptions: Vec<Subscription>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct VoiceUi {
+    channel_id: Id,
 }
 
 impl App {
@@ -153,6 +168,15 @@ impl App {
             pending_token: None,
             ack_tokens: HashMap::new(),
             last_ack: None,
+            voice: None,
+            voice_status: String::new(),
+            voice_mode: None,
+            voice_dave: false,
+            voice_latency: None,
+            speaking: HashSet::new(),
+            muted: false,
+            deafened: false,
+            incoming_call: None,
             subscriptions: Vec::new(),
         };
 
@@ -237,6 +261,36 @@ impl App {
                 }
                 self.error = Some(error);
             }
+            UiEvent::Voice(event) => match event {
+                VoiceEvent::Connecting => {
+                    self.voice_status = "подключение…".to_string();
+                }
+                VoiceEvent::Ready { mode, dave } => {
+                    self.voice_status = "подключено".to_string();
+                    self.voice_mode = Some(mode);
+                    self.voice_dave = dave;
+                }
+                VoiceEvent::Speaking {
+                    user_id, speaking, ..
+                } => {
+                    if speaking {
+                        self.speaking.insert(user_id);
+                    } else {
+                        self.speaking.remove(&user_id);
+                    }
+                }
+                VoiceEvent::Ping(latency) => self.voice_latency = Some(latency),
+                VoiceEvent::Disconnected { reason, .. } => {
+                    self.voice = None;
+                    self.voice_status.clear();
+                    self.voice_mode = None;
+                    self.voice_latency = None;
+                    self.speaking.clear();
+                    self.notice = Some(reason);
+                }
+                VoiceEvent::Error(error) => self.error = Some(error),
+                VoiceEvent::ClientConnect { .. } | VoiceEvent::ClientDisconnect { .. } => {}
+            },
             UiEvent::Discord(event) => {
                 let event = *event;
                 if let Event::Connection(state) = &event {
@@ -273,6 +327,18 @@ impl App {
                         names_changed = true;
                     }
                     _ => {}
+                }
+                if let Event::CallCreate(call) | Event::CallUpdate(call) = &event {
+                    self.update_call(call);
+                }
+                if let Event::CallDelete { channel_id } = &event {
+                    if self
+                        .incoming_call
+                        .as_ref()
+                        .is_some_and(|call| &call.channel_id == channel_id)
+                    {
+                        self.incoming_call = None;
+                    }
                 }
                 self.state.apply(&event);
                 if ready {
@@ -324,6 +390,117 @@ impl App {
                 }
             }
         }
+    }
+
+    fn update_call(&mut self, call: &Call) {
+        let Some(me) = self.state.me.as_ref() else {
+            return;
+        };
+        let ringing = call.ringing.iter().any(|id| id == &me.id);
+        let in_call = self
+            .voice
+            .as_ref()
+            .is_some_and(|voice| voice.channel_id == call.channel_id);
+        if ringing && !in_call {
+            self.incoming_call = Some(call.clone());
+        } else if self
+            .incoming_call
+            .as_ref()
+            .is_some_and(|current| current.channel_id == call.channel_id)
+            && (!ringing || call.ended_timestamp.is_some())
+        {
+            self.incoming_call = None;
+        }
+    }
+
+    fn toggle_voice(&mut self, guild_id: Option<Id>, channel_id: Id, cx: &mut Context<Self>) {
+        if self
+            .voice
+            .as_ref()
+            .is_some_and(|voice| voice.channel_id == channel_id)
+        {
+            self.leave_voice(cx);
+            return;
+        }
+        self.join_voice(guild_id, channel_id, false, cx);
+    }
+
+    fn join_voice(
+        &mut self,
+        guild_id: Option<Id>,
+        channel_id: Id,
+        ring: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(net) = &self.net {
+            net.send(Command::VoiceJoin {
+                guild_id: guild_id.clone(),
+                channel_id: channel_id.clone(),
+                ring,
+            });
+        }
+        self.voice = Some(VoiceUi { channel_id });
+        self.voice_status = "подключение…".to_string();
+        self.voice_mode = None;
+        self.voice_latency = None;
+        self.speaking.clear();
+        self.incoming_call = None;
+        cx.notify();
+    }
+
+    fn leave_voice(&mut self, cx: &mut Context<Self>) {
+        if let Some(net) = &self.net {
+            net.send(Command::VoiceLeave);
+        }
+        self.voice = None;
+        self.voice_status.clear();
+        self.voice_mode = None;
+        self.voice_latency = None;
+        self.speaking.clear();
+        cx.notify();
+    }
+
+    fn toggle_mute(&mut self, cx: &mut Context<Self>) {
+        self.muted = !self.muted;
+        if let Some(net) = &self.net {
+            net.send(Command::SetMute {
+                mute: self.muted,
+                deafen: self.deafened,
+            });
+        }
+        cx.notify();
+    }
+
+    fn toggle_deafen(&mut self, cx: &mut Context<Self>) {
+        self.deafened = !self.deafened;
+        if let Some(net) = &self.net {
+            net.send(Command::SetMute {
+                mute: self.muted,
+                deafen: self.deafened,
+            });
+        }
+        cx.notify();
+    }
+
+    fn start_call(&mut self, channel_id: Id, cx: &mut Context<Self>) {
+        self.join_voice(None, channel_id, true, cx);
+    }
+
+    fn accept_call(&mut self, cx: &mut Context<Self>) {
+        if let Some(call) = self.incoming_call.take() {
+            self.join_voice(None, call.channel_id, false, cx);
+        }
+    }
+
+    fn decline_call(&mut self, cx: &mut Context<Self>) {
+        if let Some(call) = self.incoming_call.take()
+            && let Some(net) = &self.net
+        {
+            net.send(Command::CallDecline {
+                channel_id: call.channel_id,
+            });
+        }
+        cx.notify();
     }
 
     fn pick_default_channel(&mut self, cx: &mut Context<Self>) {
@@ -1128,6 +1305,10 @@ impl App {
 
         if self.right_pane.is_some() {
             root = root.child(self.render_right_pane(cx));
+        }
+
+        if self.incoming_call.is_some() {
+            root = root.child(self.render_incoming_call(cx));
         }
 
         if self.profile_popup.is_some() {

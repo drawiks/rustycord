@@ -64,6 +64,123 @@ impl App {
             .into_any_element()
     }
 
+    pub(super) fn render_incoming_call(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let Some(call) = self.incoming_call.clone() else {
+            return div().into_any_element();
+        };
+        let me = self.state.me.as_ref().map(|user| user.id.as_str());
+        let channel = self.state.channel(&call.channel_id);
+        let caller = channel.and_then(|channel| {
+            channel
+                .recipients
+                .iter()
+                .find(|user| Some(user.id.as_str()) != me)
+                .cloned()
+                .or_else(|| {
+                    channel
+                        .recipient_ids
+                        .iter()
+                        .find(|id| Some(id.as_str()) != me)
+                        .and_then(|id| self.state.user(id).cloned())
+                })
+        });
+        let name = caller
+            .as_ref()
+            .map(|user| user.display_name().to_string())
+            .unwrap_or_else(|| "Неизвестный".to_string());
+        let status = caller
+            .as_ref()
+            .map(|user| self.state.presence(&user.id).to_string())
+            .unwrap_or_else(|| "offline".to_string());
+
+        div()
+            .absolute()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(gpui_kit::rgba(0x00000099))
+            .child(
+                div()
+                    .w(px(340.))
+                    .p(px(20.))
+                    .rounded(px(12.))
+                    .bg(rgb(SIDEBAR))
+                    .border_1()
+                    .border_color(rgb(RAIL))
+                    .shadow_lg()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(10.))
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(rgb(MUTED))
+                            .child("ВХОДЯЩИЙ ЗВОНОК"),
+                    )
+                    .child(user_avatar(caller.as_ref(), &name, &status))
+                    .child(
+                        div()
+                            .text_size(px(20.))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(rgb(TEXT_BRIGHT))
+                            .child(name),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .text_color(rgb(MUTED))
+                            .child(status_text(&status)),
+                    )
+                    .child(
+                        div()
+                            .mt(px(8.))
+                            .flex()
+                            .items_center()
+                            .gap(px(10.))
+                            .child(
+                                div()
+                                    .id("call-decline")
+                                    .size(px(48.))
+                                    .rounded(px(24.))
+                                    .bg(rgb(DANGER))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .cursor_pointer()
+                                    .hover(|style| style.opacity(0.85))
+                                    .child(
+                                        gpui_kit::component::Icon::new(IconName::PhoneOff)
+                                            .size(px(22.))
+                                            .text_color(rgb(0xffffff)),
+                                    )
+                                    .on_click(cx.listener(|this, _, _, cx| this.decline_call(cx))),
+                            )
+                            .child(
+                                div()
+                                    .id("call-accept")
+                                    .size(px(48.))
+                                    .rounded(px(24.))
+                                    .bg(rgb(0x23a55a))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .cursor_pointer()
+                                    .hover(|style| style.opacity(0.85))
+                                    .child(
+                                        gpui_kit::component::Icon::new(IconName::PhoneCall)
+                                            .size(px(22.))
+                                            .text_color(rgb(0xffffff)),
+                                    )
+                                    .on_click(cx.listener(|this, _, _, cx| this.accept_call(cx))),
+                            ),
+                    ),
+            )
+            .into_any_element()
+    }
+
     pub(super) fn render_status_menu(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let current = self
             .state

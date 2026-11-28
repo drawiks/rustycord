@@ -859,6 +859,46 @@ impl App {
             bar = bar.child(div().flex_1());
         }
 
+        if is_dm && let Some(channel) = channel {
+            let channel_id = channel.id.clone();
+            let in_call = self
+                .voice
+                .as_ref()
+                .is_some_and(|voice| voice.channel_id == channel_id);
+            let call_channel = channel_id.clone();
+            bar = bar.child(
+                div()
+                    .id("dm-call")
+                    .size(px(28.))
+                    .rounded(px(4.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_color(rgb(if in_call { 0x23a55a } else { MUTED }))
+                    .cursor_pointer()
+                    .hover(|style| style.bg(rgb(RAIL_HOVER)).text_color(rgb(TEXT_BRIGHT)))
+                    .child(
+                        gpui_kit::component::Icon::new(if in_call {
+                            IconName::PhoneOff
+                        } else {
+                            IconName::Phone
+                        })
+                        .size(px(17.)),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if this
+                            .voice
+                            .as_ref()
+                            .is_some_and(|voice| voice.channel_id == call_channel)
+                        {
+                            this.leave_voice(cx);
+                        } else {
+                            this.start_call(call_channel.clone(), cx);
+                        }
+                    })),
+            );
+        }
+
         if let Some(user) = dm_user {
             let user_id = user.id.clone();
             bar = bar.child(

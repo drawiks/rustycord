@@ -99,7 +99,10 @@ impl State {
                     guild.members.retain(|member| member.id() != user_id);
                 }
             }
-            Event::VoiceStateUpdate { guild_id, state } => {
+            Event::VoiceStateUpdate {
+                guild_id: Some(guild_id),
+                state,
+            } => {
                 if let Some(guild) = self.guilds.iter_mut().find(|guild| &guild.id == guild_id) {
                     guild
                         .voice_states
@@ -257,7 +260,12 @@ impl State {
                     self.me = Some((**user).clone());
                 }
             }
-            Event::Connection(_) => {}
+            Event::VoiceStateUpdate { guild_id: None, .. }
+            | Event::VoiceServerUpdate { .. }
+            | Event::CallCreate(_)
+            | Event::CallUpdate(_)
+            | Event::CallDelete { .. }
+            | Event::Connection(_) => {}
         }
     }
 
